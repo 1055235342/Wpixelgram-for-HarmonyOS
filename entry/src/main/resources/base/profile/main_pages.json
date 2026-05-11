@@ -1,0 +1,14 @@
+{
+  "src": [
+    "pages/LoginPage",
+    "pages/MainPage",
+    "pages/ChatListPage",
+    "pages/ChatPage",
+    "pages/VideoPlayerPage",
+    "pages/ContactsPage",
+    "pages/ProfilePage",
+    "pages/GlobalSearchPage",
+    "pages/CacheManagementPage",
+    "pages/Index"
+  ]
+}
