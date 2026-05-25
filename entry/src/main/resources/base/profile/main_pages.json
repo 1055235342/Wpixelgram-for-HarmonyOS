@@ -7,6 +7,8 @@
     "pages/VideoPlayerPage",
     "pages/ContactsPage",
     "pages/ProfilePage",
+    "pages/ChatProfilePage",
+    "pages/DataStoragePage",
     "pages/GlobalSearchPage",
     "pages/CacheManagementPage",
     "pages/Index"

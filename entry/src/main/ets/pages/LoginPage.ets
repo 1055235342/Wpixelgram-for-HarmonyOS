@@ -1,12 +1,13 @@
 // entry/src/main/ets/pages/LoginPage.ets
 import router from '@ohos.router';
 import { common } from '@kit.AbilityKit';
-import type { TdlibParameters, TdlibService, TdUpdate } from '../common/service/TdlibService';
+import type { TdlibService, TdUpdate } from '../common/service/TdlibService';
+import { TelegramBootstrap } from '../common/service/TelegramBootstrap';
 
 @Entry
 @Component
 struct LoginPage {
-  @State phone: string = '+8618668429713';
+  @State phone: string = '+86';
   @State code: string = '';
   @State showCode: boolean = false;
   @State statusText: string = '请输入手机号';
@@ -103,30 +104,12 @@ struct LoginPage {
         return td;
       }
       const context = getContext(this) as common.UIAbilityContext;
-      const params: TdlibParameters = {
-        use_test_dc: false,
-        database_directory: context.filesDir + '/tdlib/db',
-        files_directory: context.filesDir + '/tdlib/files',
-        database_encryption_key: '',
-        use_file_database: true,
-        use_chat_info_database: true,
-        use_message_database: true,
-        use_secret_chats: false,
-        api_id: xxxxx,
-        api_hash: 'xxxxxxxxxxxxxxxxxxxx',
-        system_language_code: 'zh-hans',
-        device_model: 'HarmonyOS',
-        system_version: '1.0',
-        application_version: '1.0.0'
-      };
-      console.info(`[LoginPage] setTdlibParameters params=${JSON.stringify(params)}`);
-      td.setTdlibParameters(params);
-      td.startPolling(0.1);
+      await TelegramBootstrap.initialize(context);
       this.tdlibConfigured = true;
       console.info('[LoginPage] prepareTdlib done');
       return td;
     } catch (err) {
-      this.statusText = 'TDLib 初始化失败，请查看设备日志';
+      this.statusText = 'TDLib 初始化失败，请检查 telegram_config.json';
       console.error(`LoginPage: TDLib init failed: ${JSON.stringify(err)}`);
       throw new Error('TDLib initialization failed');
     }

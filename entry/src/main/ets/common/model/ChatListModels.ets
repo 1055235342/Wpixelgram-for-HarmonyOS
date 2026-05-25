@@ -13,6 +13,7 @@ export interface ChatItem {
   avatarColor: string;
   avatarPath: string;
   avatarFileId: number;
+  version?: number;
 }
 
 export interface ChatSelection {

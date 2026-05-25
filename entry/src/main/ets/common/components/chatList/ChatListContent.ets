@@ -1,9 +1,11 @@
 import { ChatItem } from '../../model/ChatListModels';
 import { ChatListRow } from './ChatListRow';
+import { AppLayout } from '../../constants/AppLayout';
 
 @Component
 export struct ChatListContent {
   @Prop statusText: string = '';
+  @Prop headerStatusText: string = '连接中...';
   @Prop chats: ChatItem[] = [];
   @Prop selectedChatId: number = 0;
   @Prop searchTransition: boolean = false;
@@ -21,11 +23,12 @@ export struct ChatListContent {
   onLoadMoreChats: () => void = (): void => {};
 
   private getStatusBarPadding(): number {
-    return 30;
+    return AppLayout.STATUS_BAR_HEIGHT;
   }
 
   private getHeaderHeight(): number {
-    return (this.headerCollapsed ? 88 : 132) + this.getStatusBarPadding();
+    return (this.headerCollapsed ? AppLayout.CHAT_LIST_HEADER_COLLAPSED : AppLayout.CHAT_LIST_HEADER_EXPANDED) +
+      this.getStatusBarPadding();
   }
 
   private getVisibleChats(): ChatItem[] {
@@ -38,6 +41,11 @@ export struct ChatListContent {
       return '#F1F3F6';
     }
     return Color.White;
+  }
+
+  private getChatCountText(): string {
+    const count = this.getVisibleChats().length;
+    return count > 0 ? `${count} 条消息` : '';
   }
 
   private switchTopCategory(index: number): void {
@@ -138,15 +146,21 @@ export struct ChatListContent {
           console.info('[ChatListContent] edit clicked');
         })
 
-      Row({ space: 7 }) {
-        LoadingProgress()
-          .width(22)
-          .height(22)
-          .color('#0A84FF')
-        Text('连接中...')
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#111111')
+      Row() {
+        if (this.headerStatusText.length > 0) {
+          Row({ space: 7 }) {
+            LoadingProgress()
+              .width(22)
+              .height(22)
+              .color('#0A84FF')
+            Text(this.headerStatusText)
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#111111')
+          }
+        } else {
+          Blank()
+        }
       }
       .layoutWeight(1)
       .justifyContent(FlexAlign.Center)
@@ -241,12 +255,8 @@ export struct ChatListContent {
             [this.getPinnedListBackgroundColor(), 1.0]
           ]
         })
-        .linearGradientBlur(this.headerCollapsed ? 24 : 0, {
-          fractionStops: [
-            [0.0, 0.0],
-            [0.42, 0.55],
-            [1.0, 1.0]
-          ],
+        .linearGradientBlur(AppLayout.TOP_GRADIENT_BLUR_RADIUS, {
+          fractionStops: [[0, 0], [1, 1]],
           direction: GradientDirection.Top
         })
 
@@ -279,7 +289,7 @@ export struct ChatListContent {
     List({ scroller: this.chatScroller }) {
       ListItem() {
         Column()
-          .height(132 + this.getStatusBarPadding())
+          .height(AppLayout.CHAT_LIST_HEADER_EXPANDED + this.getStatusBarPadding())
           .backgroundColor(this.getPinnedListBackgroundColor())
       }
       if (this.statusText.length > 0) {
@@ -321,13 +331,21 @@ export struct ChatListContent {
               }
             })
           }
-        }, (item: ChatItem) => `${item.id}`)
+        }, (item: ChatItem) => `${item.id}-${item.version !== undefined ? item.version : 0}`)
+        ListItem() {
+          Text(this.getChatCountText())
+            .fontSize(12)
+            .fontColor('#9AA3AF')
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .padding({ top: 12, bottom: AppLayout.BOTTOM_SAFE_HEIGHT + 104 })
+        }
       }
     }
     .width('100%')
     .height('100%')
     .edgeEffect(EdgeEffect.Spring)
-    .contentEndOffset(118)
+    .contentEndOffset(AppLayout.BOTTOM_SAFE_HEIGHT + 90)
     .scrollBar(BarState.Off)
     .onReachEnd(() => {
       if (this.selectedTopCategoryIndex === 0) {
@@ -344,7 +362,7 @@ export struct ChatListContent {
   private ResourceHallPage() {
     Column() {
       Column()
-        .height(132 + this.getStatusBarPadding())
+        .height(AppLayout.CHAT_LIST_HEADER_EXPANDED + this.getStatusBarPadding())
 
       Row() {
         Text('分组有更新，您可以加入 9 个新对话')
@@ -392,7 +410,7 @@ export struct ChatListContent {
         .width('54%')
         .borderRadius(12)
         .backgroundColor('#0A8DFF')
-        .margin({ bottom: 148 })
+        .margin({ bottom: AppLayout.BOTTOM_SAFE_HEIGHT + 120 })
         .onClick(() => {
           console.info('[ChatListContent] edit resource group clicked');
         })

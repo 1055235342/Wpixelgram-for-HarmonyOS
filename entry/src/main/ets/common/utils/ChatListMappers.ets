@@ -19,7 +19,8 @@ export function createLoadingChat(id: number): ChatItem {
     avatarText: getAvatarText(title),
     avatarColor: getAvatarColor(id),
     avatarPath: '',
-    avatarFileId: 0
+    avatarFileId: 0,
+    version: 0
   };
 }
 
@@ -39,7 +40,8 @@ export function createChatItem(chat: TdChat): ChatItem {
     avatarText: getAvatarText(title),
     avatarColor: getAvatarColor(chat.id),
     avatarPath: getChatAvatarPath(chat),
-    avatarFileId: getChatAvatarFileId(chat)
+    avatarFileId: getChatAvatarFileId(chat),
+    version: 0
   };
 }
 
@@ -148,6 +150,13 @@ export function isMainChatPosition(position: TdChatPosition | undefined): boolea
     return false;
   }
   return isMainListPosition(position);
+}
+
+export function hasMainChatPosition(positions: TdChatPosition[] | undefined): boolean {
+  if (!positions) {
+    return false;
+  }
+  return positions.some((position: TdChatPosition): boolean => isMainListPosition(position));
 }
 
 export function getAvatarText(title: string): string {
