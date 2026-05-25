@@ -21,7 +21,9 @@ import {
 } from '../common/service/TdlibService';
 import { GalleryService } from '../common/service/GalleryService';
 import { common, Want } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { KeyboardAvoidMode, window } from '@kit.ArkUI';
+import { media } from '@kit.MediaKit';
 import router from '@ohos.router';
 import { AppLayout } from '../common/constants/AppLayout';
 
@@ -88,6 +90,7 @@ interface MessageItem {
   mediaHeight: number;
   dateText: string;
   viewCount: number;
+  mediaVersion: number;
 }
 
 interface MessageGroupItem {
@@ -132,6 +135,11 @@ interface StartAbilityError {
   message?: string;
 }
 
+interface OperationError {
+  code?: number;
+  message?: string;
+}
+
 @Entry
 @Component
 export struct ChatPage {
@@ -168,6 +176,9 @@ export struct ChatPage {
   @State imagePreviewPath: string = '';
   @State imagePreviewOpacity: number = 0;
   @State imagePreviewScale: number = 0.92;
+  @State activeAudioMessageId: number = 0;
+  @State activeAudioTitle: string = '';
+  @State activeAudioPerformer: string = '';
   @State playingAudioMessageId: number = 0;
   @StorageLink('appDarkMode') isDarkMode: boolean = false;
   initialChatId: number = 0;
@@ -195,10 +206,13 @@ export struct ChatPage {
   private botMenuMinSheetHeight: number = 250;
   private botMenuMaxSheetHeight: number = 360;
   private keyboardWindow: window.Window | null = null;
+  private audioPlayer: media.AVPlayer | null = null;
+  private audioFile: fileIo.File | null = null;
+  private preparingAudioMessageId: number = 0;
+  private floatingPanelColor: string = '#E6FFFFFF';
   private keyboardWillShowCallback = (info: window.KeyboardInfo): void => {
-    const heightVp = this.getUIContext().px2vp(info.endRect.height);
-    this.keyboardHeight = Math.max(0, heightVp);
-    console.info(`[ChatPage] keyboard will show heightVp=${this.keyboardHeight}`);
+    this.keyboardHeight = this.resolveKeyboardHeightVp(info);
+    console.info(`[ChatPage] keyboard will show heightVp=${this.keyboardHeight}, rectTop=${info.endRect.top}, rectHeight=${info.endRect.height}`);
     this.scheduleScrollToLatestAt(false, 260);
   };
   private keyboardWillHideCallback = (_info: window.KeyboardInfo): void => {
@@ -232,6 +246,7 @@ export struct ChatPage {
   aboutToDisappear() {
     this.markLoadedUnreadMessagesRead();
     this.flushVisibleReads();
+    this.releaseAudioPlayer(true);
     if (this.chatId !== 0) {
       this.td.closeChat(this.chatId);
       this.td.getChat(this.chatId);
@@ -291,6 +306,29 @@ export struct ChatPage {
       const error = err as StartAbilityError;
       console.error(`[ChatPage] restore keyboard avoidance failed code=${error.code}, message=${error.message}`);
     }
+  }
+
+  private resolveKeyboardHeightVp(info: window.KeyboardInfo): number {
+    let keyboardHeightPx = Math.max(0, info.endRect.height);
+    let windowHeightVp = 0;
+
+    try {
+      if (this.keyboardWindow) {
+        const properties = this.keyboardWindow.getWindowProperties();
+        const windowBottomPx = properties.windowRect.top + properties.windowRect.height;
+        windowHeightVp = this.getUIContext().px2vp(properties.windowRect.height);
+        if (info.endRect.top > 0 && info.endRect.top < windowBottomPx) {
+          keyboardHeightPx = windowBottomPx - info.endRect.top;
+        }
+      }
+    } catch (err) {
+      const error = err as StartAbilityError;
+      console.error(`[ChatPage] resolve keyboard height failed code=${error.code}, message=${error.message}`);
+    }
+
+    const keyboardHeightVp = this.getUIContext().px2vp(keyboardHeightPx);
+    const maxKeyboardHeightVp = windowHeightVp > 0 ? windowHeightVp * 0.55 : 420;
+    return Math.min(Math.max(0, keyboardHeightVp), maxKeyboardHeightVp);
   }
 
   private readRouteParams(): void {
@@ -756,7 +794,8 @@ export struct ChatPage {
       mediaWidth: 0,
       mediaHeight: 0,
       dateText: this.getMessageTime(message),
-      viewCount: this.getMessageViewCount(message)
+      viewCount: this.getMessageViewCount(message),
+      mediaVersion: 0
     };
     if (content && content.type === 'messagePhoto' && content.photo) {
       const size: TdPhotoSize | undefined = this.getPreviewPhotoSize(content.photo);
@@ -956,11 +995,26 @@ export struct ChatPage {
   }
 
   private getTopContentInset(): number {
-    return this.pinnedMessageText.length > 0 ? AppLayout.STATUS_BAR_HEIGHT + 110 : AppLayout.STATUS_BAR_HEIGHT + 66;
+    return AppLayout.STATUS_BAR_HEIGHT + 66 + this.getTopInfoPanelHeight();
   }
 
   private getTopFloatingHeight(): number {
-    return this.pinnedMessageText.length > 0 ? AppLayout.STATUS_BAR_HEIGHT + 128 : AppLayout.STATUS_BAR_HEIGHT + 86;
+    return AppLayout.STATUS_BAR_HEIGHT + 86 + this.getTopInfoPanelHeight();
+  }
+
+  private getTopInfoPanelHeight(): number {
+    const hasAudio = this.activeAudioMessageId > 0;
+    const hasPinned = this.pinnedMessageText.length > 0;
+    if (hasAudio && hasPinned) {
+      return 88;
+    }
+    if (hasAudio) {
+      return 46;
+    }
+    if (hasPinned) {
+      return 50;
+    }
+    return 0;
   }
 
   private getMessageTime(message: TdMessage): string {
@@ -1721,6 +1775,13 @@ export struct ChatPage {
     return `file://${path}`;
   }
 
+  private toLocalFilePath(source: string): string {
+    if (source.startsWith('file://')) {
+      return source.substring('file://'.length);
+    }
+    return source;
+  }
+
   private prepareMessageMedia(message: TdMessage): void {
     const content: TdMessageContent | undefined = message.content;
     if (!content) {
@@ -1811,7 +1872,7 @@ export struct ChatPage {
       const current = this.messages[index];
       if (!this.isAlbumMediaMessage(current)) {
         groups.push({
-          id: `msg-${current.id}`,
+          id: `msg-${current.id}-${current.mediaVersion}`,
           anchorId: current.id,
           isAlbum: false,
           items: [current]
@@ -1835,14 +1896,14 @@ export struct ChatPage {
 
       if (albumItems.length > 1) {
         groups.push({
-          id: `album-${current.mediaAlbumId}-${albumItems[0].id}`,
+          id: `album-${current.mediaAlbumId}-${albumItems[0].id}-${this.getGroupMediaVersion(albumItems)}`,
           anchorId: albumItems[0].id,
           isAlbum: true,
           items: albumItems
         });
       } else {
         groups.push({
-          id: `msg-${current.id}`,
+          id: `msg-${current.id}-${current.mediaVersion}`,
           anchorId: current.id,
           isAlbum: false,
           items: [current]
@@ -1851,6 +1912,26 @@ export struct ChatPage {
       index = nextIndex;
     }
     return groups;
+  }
+
+  private getGroupMediaVersion(items: MessageItem[]): number {
+    let version = 0;
+    items.forEach((item: MessageItem) => {
+      version += item.mediaVersion;
+    });
+    return version;
+  }
+
+  private getDownloadPercentBucket(downloadedSize: number, expectedSize: number): number {
+    if (expectedSize <= 0) {
+      return 0;
+    }
+    return Math.min(100, Math.max(0, Math.floor(downloadedSize * 100 / expectedSize)));
+  }
+
+  private getStableExpectedSize(currentExpectedSize: number, file: TdFile): number {
+    const nextExpectedSize = this.getExpectedSize(file);
+    return nextExpectedSize > 0 ? nextExpectedSize : currentExpectedSize;
   }
 
   private getDisplayIndexForMessageId(messageId: number): number {
@@ -2012,16 +2093,14 @@ export struct ChatPage {
       mediaWidth: message.mediaWidth,
       mediaHeight: message.mediaHeight,
       dateText: message.dateText,
-      viewCount: message.viewCount
+      viewCount: message.viewCount,
+      mediaVersion: message.mediaVersion
     };
   }
 
   private applyFileUpdate(file: TdFile): void {
     const path = this.getLocalPath(file);
-    if (path.length === 0) {
-      return;
-    }
-    if (file.id === this.chatAvatarFileId) {
+    if (file.id === this.chatAvatarFileId && path.length > 0) {
       console.info(`[ChatPage] apply chat avatar file update fileId=${file.id}`);
       this.chatAvatarPath = path;
     }
@@ -2062,41 +2141,89 @@ export struct ChatPage {
         mediaWidth: message.mediaWidth,
         mediaHeight: message.mediaHeight,
         dateText: message.dateText,
-        viewCount: message.viewCount
+        viewCount: message.viewCount,
+        mediaVersion: message.mediaVersion
       };
-      if (next.photoFileId === file.id) {
+      if (next.photoFileId === file.id && path.length > 0) {
         next.photoPath = path;
         next.mediaFormat = this.getMediaFormat('', '', path, next.mediaFormat.length > 0 ? next.mediaFormat : 'jpg');
+        next.mediaVersion += 1;
         changed = true;
       }
       if (next.videoFileId === file.id) {
-        next.videoPath = path;
-        next.videoDownloadedSize = this.getDownloadedSize(file);
-        next.videoExpectedSize = this.getExpectedSize(file);
+        const previousBucket = this.getDownloadPercentBucket(message.videoDownloadedSize, message.videoExpectedSize);
+        const downloadedSize = this.getDownloadedSize(file);
+        const expectedSize = this.getStableExpectedSize(message.videoExpectedSize, file);
+        const nextBucket = this.getDownloadPercentBucket(downloadedSize, expectedSize);
+        const pathChanged = path.length > 0 && path !== message.videoPath;
+        const readyChanged = this.canPlayVideo(file) !== message.videoCanPlay;
+        if (pathChanged) {
+          next.videoPath = path;
+        }
+        next.videoDownloadedSize = downloadedSize;
+        next.videoExpectedSize = expectedSize;
         next.videoCanPlay = this.canPlayVideo(file);
-        next.mediaFormat = this.getMediaFormat('', '', path, next.mediaFormat.length > 0 ? next.mediaFormat : 'mp4');
-        changed = true;
+        if (pathChanged) {
+          next.mediaFormat = this.getMediaFormat('', '', path, next.mediaFormat.length > 0 ? next.mediaFormat : 'mp4');
+        }
+        if (pathChanged || readyChanged || nextBucket !== previousBucket || expectedSize !== message.videoExpectedSize) {
+          if (pathChanged || readyChanged) {
+            next.mediaVersion += 1;
+          }
+          changed = true;
+        }
       }
-      if (next.thumbnailFileId === file.id) {
+      if (next.thumbnailFileId === file.id && path.length > 0) {
         next.thumbnailPath = path;
+        next.mediaVersion += 1;
         changed = true;
       }
       if (next.documentFileId === file.id) {
-        next.documentSize = this.getExpectedSize(file);
-        changed = true;
+        const expectedSize = this.getExpectedSize(file);
+        if (expectedSize !== message.documentSize) {
+          next.documentSize = expectedSize;
+          next.mediaVersion += 1;
+          changed = true;
+        }
       }
       if (next.audioFileId === file.id) {
-        next.audioPath = path;
-        next.audioDownloadedSize = this.getDownloadedSize(file);
-        next.audioExpectedSize = this.getExpectedSize(file);
-        next.mediaFormat = this.getMediaFormat('', '', path, next.mediaFormat.length > 0 ? next.mediaFormat : 'mp3');
-        changed = true;
+        const previousBucket = this.getDownloadPercentBucket(message.audioDownloadedSize, message.audioExpectedSize);
+        const previousReady = this.isAudioReady(message);
+        const downloadedSize = Math.max(message.audioDownloadedSize, this.getDownloadedSize(file));
+        const expectedSize = this.getStableExpectedSize(message.audioExpectedSize, file);
+        const nextBucket = this.getDownloadPercentBucket(downloadedSize, expectedSize);
+        const pathChanged = path.length > 0 && path !== message.audioPath;
+        if (pathChanged) {
+          next.audioPath = path;
+        }
+        next.audioDownloadedSize = downloadedSize;
+        next.audioExpectedSize = expectedSize;
+        if (pathChanged) {
+          next.mediaFormat = this.getMediaFormat('', '', path, next.mediaFormat.length > 0 ? next.mediaFormat : 'mp3');
+        }
+        if (this.activeAudioMessageId === next.id && this.audioPlayer === null &&
+          path.length > 0 && (file.local && file.local.is_downloading_completed || this.isAudioReady(next))) {
+          this.createAndPlayAudio(next.id, path);
+        }
+        if (pathChanged || this.isAudioReady(next) !== previousReady || nextBucket !== previousBucket ||
+          expectedSize !== message.audioExpectedSize) {
+          if (pathChanged || this.isAudioReady(next) !== previousReady) {
+            next.mediaVersion += 1;
+          }
+          changed = true;
+        }
       }
       return next;
     });
     if (changed) {
-      console.info(`[ChatPage] applyFileUpdate fileId=${file.id}, path=${path}`);
+      console.info(`[ChatPage] applyFileUpdate fileId=${file.id}, path=${path}, downloaded=${this.getDownloadedSize(file)}, expected=${this.getExpectedSize(file)}`);
       this.messages = nextMessages;
+      nextMessages.forEach((message: MessageItem) => {
+        if (message.photoFileId === file.id || message.videoFileId === file.id || message.thumbnailFileId === file.id ||
+          message.documentFileId === file.id || message.audioFileId === file.id) {
+          this.messageCache.set(message.id, message);
+        }
+      });
     }
   }
 
@@ -2142,7 +2269,8 @@ export struct ChatPage {
         mediaWidth: 0,
         mediaHeight: 0,
         dateText: message.dateText,
-        viewCount: message.viewCount
+        viewCount: message.viewCount,
+        mediaVersion: message.mediaVersion + 1
       };
       if (content.type === 'messagePhoto' && content.photo) {
         const size: TdPhotoSize | undefined = this.getPreviewPhotoSize(content.photo);
@@ -2241,7 +2369,8 @@ export struct ChatPage {
         mediaWidth: message.mediaWidth,
         mediaHeight: message.mediaHeight,
         dateText: message.dateText,
-        viewCount: message.viewCount
+        viewCount: message.viewCount,
+        mediaVersion: message.mediaVersion
       };
     });
     if (changed) {
@@ -2278,6 +2407,24 @@ export struct ChatPage {
     return `00:00 / ${this.formatDuration(msg.audioDuration)}`;
   }
 
+  private getAudioDownloadPercent(msg: MessageItem): number {
+    if (msg.audioExpectedSize <= 0) {
+      return 0;
+    }
+    const percent = (msg.audioDownloadedSize / msg.audioExpectedSize) * 100;
+    return Math.min(100, Math.max(0, percent));
+  }
+
+  private isAudioReady(msg: MessageItem): boolean {
+    if (msg.audioPath.length === 0) {
+      return false;
+    }
+    if (msg.audioExpectedSize <= 0) {
+      return true;
+    }
+    return msg.audioDownloadedSize >= msg.audioExpectedSize;
+  }
+
   private formatDuration(seconds: number): string {
     const safeSeconds = Math.max(0, seconds);
     const minutes = Math.floor(safeSeconds / 60);
@@ -2296,11 +2443,156 @@ export struct ChatPage {
   }
 
   private toggleAudioPlayback(msg: MessageItem): void {
-    if (msg.audioFileId > 0 && msg.audioPath.length === 0) {
+    this.activeAudioMessageId = msg.id;
+    this.activeAudioTitle = msg.audioTitle;
+    this.activeAudioPerformer = msg.audioPerformer;
+    if (!this.isAudioReady(msg)) {
       console.info(`[ChatPage] audio download clicked messageId=${msg.id}, fileId=${msg.audioFileId}`);
-      this.td.downloadFile(msg.audioFileId, 24);
+      this.playingAudioMessageId = 0;
+      this.releaseAudioPlayer(false);
+      if (msg.audioFileId > 0) {
+        this.td.downloadFile(msg.audioFileId, 32);
+      }
+      this.statusText = '正在下载音频...';
+      return;
     }
-    this.playingAudioMessageId = this.playingAudioMessageId === msg.id ? 0 : msg.id;
+    if (this.playingAudioMessageId === msg.id) {
+      this.pauseActiveAudio();
+      return;
+    }
+    this.createAndPlayAudio(msg.id, msg.audioPath);
+  }
+
+  private playActiveAudio(): void {
+    const message = this.getActiveAudioMessage();
+    if (!message) {
+      this.stopAudioPlayback();
+      return;
+    }
+    this.toggleAudioPlayback(message);
+  }
+
+  private getActiveAudioMessage(): MessageItem | undefined {
+    return this.messages.find((message: MessageItem): boolean => message.id === this.activeAudioMessageId);
+  }
+
+  private createAndPlayAudio(messageId: number, source: string): void {
+    if (source.length === 0) {
+      return;
+    }
+    this.releaseAudioPlayer(false);
+    this.preparingAudioMessageId = messageId;
+    media.createAVPlayer().then((player: media.AVPlayer) => {
+      if (this.preparingAudioMessageId !== messageId) {
+        player.release();
+        return;
+      }
+      const localPath = this.toLocalFilePath(source);
+      const audioFile = fileIo.openSync(localPath, fileIo.OpenMode.READ_ONLY);
+      this.audioPlayer = player;
+      this.audioFile = audioFile;
+      this.bindAudioPlayerEvents(player, messageId);
+      console.info(`[ChatPage] audio player fd source=${localPath}, messageId=${messageId}`);
+      player.fdSrc = {
+        fd: audioFile.fd,
+        offset: 0
+      };
+    }).catch((err: OperationError) => {
+      console.error(`[ChatPage] create audio player failed code=${err.code}, message=${err.message}`);
+      this.playingAudioMessageId = 0;
+      this.statusText = '音频播放失败';
+    });
+  }
+
+  private bindAudioPlayerEvents(player: media.AVPlayer, messageId: number): void {
+    player.on('stateChange', (state: media.AVPlayerState, reason: media.StateChangeReason) => {
+      if (player !== this.audioPlayer) {
+        return;
+      }
+      console.info(`[ChatPage] audio player state=${state}, reason=${reason}, messageId=${messageId}`);
+      if (state === 'initialized') {
+        player.prepare().catch((err: OperationError) => {
+          console.error(`[ChatPage] audio prepare failed code=${err.code}, message=${err.message}`);
+          this.playingAudioMessageId = 0;
+          this.statusText = '音频播放失败';
+        });
+      }
+      if (state === 'prepared') {
+        player.play().then(() => {
+          this.playingAudioMessageId = messageId;
+          this.statusText = '';
+        }).catch((err: OperationError) => {
+          console.error(`[ChatPage] audio play failed code=${err.code}, message=${err.message}`);
+          this.playingAudioMessageId = 0;
+          this.statusText = '音频播放失败';
+        });
+      }
+      if (state === 'playing') {
+        this.playingAudioMessageId = messageId;
+      }
+      if (state === 'paused' || state === 'completed' || state === 'stopped') {
+        if (this.playingAudioMessageId === messageId) {
+          this.playingAudioMessageId = 0;
+        }
+      }
+      if (state === 'error') {
+        this.playingAudioMessageId = 0;
+        this.statusText = '音频播放失败';
+      }
+    });
+    player.on('error', (err: BusinessError) => {
+      if (player !== this.audioPlayer) {
+        return;
+      }
+      console.error(`[ChatPage] audio player error code=${err.code}, message=${err.message}`);
+      this.playingAudioMessageId = 0;
+      this.statusText = '音频播放失败';
+    });
+  }
+
+  private pauseActiveAudio(): void {
+    const player = this.audioPlayer;
+    if (player === null) {
+      this.playingAudioMessageId = 0;
+      return;
+    }
+    player.pause().then(() => {
+      this.playingAudioMessageId = 0;
+    }).catch((err: OperationError) => {
+      console.error(`[ChatPage] audio pause failed code=${err.code}, message=${err.message}`);
+      this.playingAudioMessageId = 0;
+    });
+  }
+
+  private stopAudioPlayback(): void {
+    this.releaseAudioPlayer(true);
+  }
+
+  private releaseAudioPlayer(clearActive: boolean): void {
+    const player = this.audioPlayer;
+    const audioFile = this.audioFile;
+    this.audioPlayer = null;
+    this.audioFile = null;
+    this.preparingAudioMessageId = 0;
+    this.playingAudioMessageId = 0;
+    if (clearActive) {
+      this.activeAudioMessageId = 0;
+      this.activeAudioTitle = '';
+      this.activeAudioPerformer = '';
+    }
+    if (player !== null) {
+      player.release().catch((err: OperationError) => {
+        console.error(`[ChatPage] audio release failed code=${err.code}, message=${err.message}`);
+      });
+    }
+    if (audioFile !== null) {
+      try {
+        fileIo.closeSync(audioFile);
+      } catch (err) {
+        const error = err as OperationError;
+        console.error(`[ChatPage] audio fd close failed code=${error.code}, message=${error.message}`);
+      }
+    }
   }
 
   private getMediaRatio(msg: MessageItem): number {
@@ -2504,7 +2796,70 @@ export struct ChatPage {
   }
 
   @Builder
-  private PinnedMessageBar() {
+  private AudioMiniPlayerContent() {
+    if (this.activeAudioMessageId > 0) {
+      Row({ space: 8 }) {
+        Button({ type: ButtonType.Circle }) {
+          Image(this.playingAudioMessageId === this.activeAudioMessageId ? $r('app.media.tingzhi') : $r('app.media.playfill'))
+            .width(16)
+            .height(16)
+            .objectFit(ImageFit.Contain)
+        }
+        .width(32)
+        .height(32)
+        .backgroundColor('#26000000')
+        .onClick(() => {
+          if (this.playingAudioMessageId === this.activeAudioMessageId) {
+            this.pauseActiveAudio();
+          } else {
+            this.playActiveAudio();
+          }
+        })
+
+        Column() {
+          Text(this.activeAudioTitle.length > 0 ? this.activeAudioTitle : '音乐')
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#111111')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .textAlign(TextAlign.Center)
+          Text(this.activeAudioPerformer.length > 0 ? this.activeAudioPerformer : '未知作者')
+            .fontSize(10)
+            .fontColor('#687275')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 1 })
+            .width('100%')
+            .textAlign(TextAlign.Center)
+        }
+        .layoutWeight(1)
+        .height(34)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+
+        Button({ type: ButtonType.Circle }) {
+          Text('×')
+            .fontSize(20)
+            .fontColor('#222222')
+            .textAlign(TextAlign.Center)
+        }
+        .width(30)
+        .height(30)
+        .backgroundColor('#1A000000')
+        .onClick(() => {
+          this.stopAudioPlayback();
+        })
+      }
+      .height(42)
+      .width('100%')
+      .padding({ left: 8, right: 8 })
+    }
+  }
+
+  @Builder
+  private PinnedMessageContent() {
     if (this.pinnedMessageText.length > 0) {
       Row({ space: 8 }) {
         Column()
@@ -2533,11 +2888,33 @@ export struct ChatPage {
           .width(28)
           .textAlign(TextAlign.Center)
       }
-      .height(50)
-      .width('92%')
+      .height(44)
+      .width('100%')
       .padding({ left: 6, right: 10 })
-      .borderRadius(50)
-      .backgroundColor('#c8ffffff')
+    }
+  }
+
+  @Builder
+  private TopInfoPanel() {
+    if (this.activeAudioMessageId > 0 || this.pinnedMessageText.length > 0) {
+      Column() {
+        if (this.activeAudioMessageId > 0) {
+          this.AudioMiniPlayerContent()
+        }
+        if (this.activeAudioMessageId > 0 && this.pinnedMessageText.length > 0) {
+          Divider()
+            .strokeWidth(0.5)
+            .color('#26000000')
+            .margin({ left: 14, right: 14 })
+        }
+        if (this.pinnedMessageText.length > 0) {
+          this.PinnedMessageContent()
+        }
+      }
+      .width('92%')
+      .height(this.getTopInfoPanelHeight())
+      .borderRadius(22)
+      .backgroundColor(this.floatingPanelColor)
       .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
       .position({ x: '4%', y: AppLayout.STATUS_BAR_HEIGHT + 54 })
     }
@@ -2696,7 +3073,7 @@ export struct ChatPage {
         .width(40)
         .height(40)
         .borderRadius(20)
-        .backgroundColor('#99ffffff')
+        .backgroundColor(this.floatingPanelColor)
         .onClick(() => {
           if (!this.embedded) {
             console.info(`[ChatPage] back clicked chatId=${this.chatId}`);
@@ -2740,7 +3117,7 @@ export struct ChatPage {
         .justifyContent(FlexAlign.Center)
         .padding({ left: 12, right: 12 })
         .borderRadius(20)
-        .backgroundColor('#99ffffff')
+        .backgroundColor(this.floatingPanelColor)
         .shadow({ radius: 12, color: '#16000000', offsetY: 4 })
         .onClick(() => {
           console.info(`[ChatPage] title clicked chatId=${this.chatId}`);
@@ -2757,7 +3134,7 @@ export struct ChatPage {
           Circle()
             .width(40)
             .height(40)
-            .fill('#F6FFFFFF')
+            .fill(this.floatingPanelColor)
           this.ChatAvatar(36)
         }
         .width(40)
@@ -2892,17 +3269,28 @@ export struct ChatPage {
     Column() {
       Row({ space: 9 }) {
         Stack({ alignContent: Alignment.Center }) {
+          Circle()
+            .width(64)
+            .height(64)
+            .fill(Color.Transparent)
+            .stroke('#DDE8EE')
+            .strokeWidth(3)
+          Progress({ value: this.getAudioDownloadPercent(msg), total: 100, type: ProgressType.Ring })
+            .width(64)
+            .height(64)
+            .color('#0A84FF')
+
           if (msg.thumbnailPath.length > 0) {
             Image(msg.thumbnailPath)
-              .width(58)
-              .height(58)
+              .width(54)
+              .height(54)
               .objectFit(ImageFit.Cover)
-              .borderRadius(10)
+              .borderRadius(27)
           } else {
             Column()
-              .width(58)
-              .height(58)
-              .borderRadius(10)
+              .width(54)
+              .height(54)
+              .borderRadius(27)
               .linearGradient({
                 direction: GradientDirection.Bottom,
                 colors: [['#69C7FF', 0], ['#7E66F2', 1]]
@@ -2931,15 +3319,15 @@ export struct ChatPage {
           .width(20)
           .height(20)
           .backgroundColor('#CC0A84FF')
-          .position({ x: 36, y: 36 })
+          .position({ x: 42, y: 42 })
           .onClick(() => {
             if (msg.audioFileId > 0) {
-              this.td.downloadFile(msg.audioFileId, 24);
+              this.td.downloadFile(msg.audioFileId, 32);
             }
           })
         }
-        .width(58)
-        .height(58)
+        .width(64)
+        .height(64)
 
         Column() {
           Text(msg.audioTitle)
@@ -3253,13 +3641,11 @@ export struct ChatPage {
         .margin({ top: 5 })
       }
       Row() {
-        Blank()
-        Column() {
-          this.MessageMetaFooter(msg.viewCount, msg.dateText, msg.isSelf)
-        }
-        .margin({ top: 4 })
+        this.MessageMetaFooter(msg.viewCount, msg.dateText, msg.isSelf)
       }
-      .width('100%')
+      .justifyContent(FlexAlign.End)
+      .constraintSize({ maxWidth: 280 })
+      .margin({ top: 4 })
     }
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 9, right: 9, top: 7, bottom: 5 })
@@ -3371,14 +3757,12 @@ export struct ChatPage {
       }, (msg: MessageItem): string => `caption-${msg.id}`)
 
       Row() {
-        Blank()
-        Column() {
-          this.MessageMetaFooter(group.items[group.items.length - 1].viewCount,
-            group.items[group.items.length - 1].dateText, group.items[0].isSelf)
-        }
-        .margin({ top: 4 })
+        this.MessageMetaFooter(group.items[group.items.length - 1].viewCount,
+          group.items[group.items.length - 1].dateText, group.items[0].isSelf)
       }
-      .width('100%')
+      .justifyContent(FlexAlign.End)
+      .constraintSize({ maxWidth: 300 })
+      .margin({ top: 4 })
     }
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 9, right: 9, top: 7, bottom: 5 })
@@ -3470,7 +3854,7 @@ export struct ChatPage {
       }
       .width(48)
       .height(48)
-      .backgroundColor('#DFFFFFFF')
+      .backgroundColor(this.floatingPanelColor)
       .shadow({ radius: 12, color: '#16000000', offsetY: 4 })
       .onClick(() => {
         console.info(`[ChatPage] channel gift clicked chatId=${this.chatId}`);
@@ -3495,7 +3879,7 @@ export struct ChatPage {
       .height(48)
       .margin({ left: 12, right: 12 })
       .borderRadius(24)
-      .backgroundColor('#DFFFFFFF')
+      .backgroundColor(this.floatingPanelColor)
       .shadow({ radius: 12, color: '#16000000', offsetY: 4 })
       .onClick(() => {
         this.toggleChannelNotifications();
@@ -3509,7 +3893,7 @@ export struct ChatPage {
       }
       .width(48)
       .height(48)
-      .backgroundColor('#DFFFFFFF')
+      .backgroundColor(this.floatingPanelColor)
       .shadow({ radius: 12, color: '#16000000', offsetY: 4 })
       .onClick(() => {
         console.info(`[ChatPage] channel search clicked chatId=${this.chatId}`);
@@ -3550,7 +3934,7 @@ export struct ChatPage {
       .width(40)
       .height(40)
       .borderRadius(20)
-      .backgroundColor('#99ffffff')
+      .backgroundColor(this.floatingPanelColor)
       .shadow({ radius: 10, color: '#16000000', offsetY: 3 })
       .margin({ left: this.shouldShowBotMenuButton() ? 6 : 0 })
       .onClick(() => {
@@ -3584,7 +3968,7 @@ export struct ChatPage {
       .padding({ left: 10, right: 7 })
       .margin({ left: 7, right: 7 })
       .borderRadius(20)
-      .backgroundColor('#99ffffff')
+      .backgroundColor(this.floatingPanelColor)
       .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
 
       Button() {
@@ -3603,7 +3987,7 @@ export struct ChatPage {
       .width(40)
       .height(40)
       .borderRadius(20)
-      .backgroundColor('#99ffffff')
+      .backgroundColor(this.floatingPanelColor)
       .shadow({ radius: 10, color: '#16000000', offsetY: 3 })
       .onClick(() => {
         console.info(`[ChatPage] voice/send clicked chatId=${this.chatId}, textLength=${this.input.trim().length}`);
@@ -3739,7 +4123,7 @@ export struct ChatPage {
 
       Column() {
         this.ChatHeader()
-        this.PinnedMessageBar()
+        this.TopInfoPanel()
       }
       .width('100%')
       .height(this.getTopFloatingHeight())
@@ -3924,12 +4308,12 @@ export struct ChatPage {
         ListItem() {
           Column()
             .height(this.getMessageListBottomInset())
+            .animation({ duration: 220, curve: Curve.EaseOut })
         }
       }
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
-      .contentEndOffset(this.getMessageListBottomInset())
       .scrollBar(BarState.Off)
       .onReachStart(() => {
         console.info(`[ChatPage] list reach start chatId=${this.chatId}`);
