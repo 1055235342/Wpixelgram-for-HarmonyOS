@@ -5,11 +5,6 @@ export struct ChatBottomTabItem {
   @Prop activeTab: string = '';
   normalIcon: Resource = $r('app.media.bar_msg');
   selectedIcon: Resource = $r('app.media.bar_msg_select');
-  @Prop badge: number = 0;
-
-  private formatBadge(count: number): string {
-    return count > 99 ? '99+' : `${count}`;
-  }
 
   build() {
     Column() {
@@ -18,17 +13,6 @@ export struct ChatBottomTabItem {
           .width(42)
           .height(24)
           .objectFit(ImageFit.Contain)
-        if (this.badge > 0) {
-          Text(this.formatBadge(this.badge))
-            .fontSize(12)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(Color.White)
-            .textAlign(TextAlign.Center)
-            .width(20)
-            .height(20)
-            .borderRadius(10)
-            .backgroundColor('#238AF2')
-        }
       }
       .width(42)
       .height(24)

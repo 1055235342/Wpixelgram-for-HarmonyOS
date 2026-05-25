@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { TelegramBootstrap } from '../common/service/TelegramBootstrap';
 
 const DOMAIN = 0x0000;
 
@@ -8,7 +9,11 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
-
+      TelegramBootstrap.initialize(this.context).then(() => {
+        hilog.info(DOMAIN, 'testTag', '%{public}s', 'TDLib bootstrap finished');
+      }).catch((err: Error) => {
+        hilog.error(DOMAIN, 'testTag', 'TDLib bootstrap failed. Cause: %{public}s', err.message);
+      });
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
@@ -34,7 +39,7 @@ export default class EntryAbility extends UIAbility {
       }
     });
 
-    windowStage.loadContent('pages/LoginPage', (err) => {
+    windowStage.loadContent('pages/MainPage', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;

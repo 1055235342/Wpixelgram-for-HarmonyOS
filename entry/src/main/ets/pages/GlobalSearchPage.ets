@@ -1,6 +1,7 @@
 // entry/src/main/ets/pages/GlobalSearchPage.ets
 import router from '@ohos.router';
 import { TdMessage, TdMessageContent, TdUpdate, TdlibService } from '../common/service/TdlibService';
+import { AppLayout } from '../common/constants/AppLayout';
 
 interface SearchResultItem {
   id: string;
@@ -171,8 +172,36 @@ export struct GlobalSearchPage {
     }
   }
 
-  build() {
-    Column() {
+  @Builder
+  private TopBar() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height(AppLayout.STATUS_BAR_HEIGHT + AppLayout.SECONDARY_TOP_CONTENT_HEIGHT)
+        .backgroundColor('#EEF0F5')
+        .linearGradientBlur(AppLayout.TOP_GRADIENT_BLUR_RADIUS, {
+          fractionStops: [[0, 0], [1, 1]],
+          direction: GradientDirection.Top
+        })
+
+      Button({ type: ButtonType.Circle }) {
+        Image($r('app.media.back'))
+          .width(21)
+          .height(21)
+          .objectFit(ImageFit.Contain)
+          .fillColor('#111111')
+      }
+      .width(44)
+      .height(44)
+      .borderRadius(22)
+      .backgroundColor('#F8FFFFFF')
+      .border({ width: 1, color: '#FFFFFFFF' })
+      .shadow({ radius: 12, color: '#12000000', offsetY: 4 })
+      .position({ x: 18, y: AppLayout.STATUS_BAR_HEIGHT + AppLayout.SECONDARY_TOP_CONTROL_Y_OFFSET })
+      .onClick(() => {
+        router.back();
+      })
+
       Search({ placeholder: '搜索消息或联系人', value: this.query })
         .onChange((value: string) => {
           this.query = value;
@@ -180,44 +209,63 @@ export struct GlobalSearchPage {
         .onSubmit((value: string) => {
           this.submitSearch(value);
         })
-        .width('100%')
-        .padding(12)
+        .height(44)
+        .width('calc(100% - 82vp)')
+        .position({ x: 70, y: AppLayout.STATUS_BAR_HEIGHT + AppLayout.SECONDARY_TOP_CONTROL_Y_OFFSET })
+    }
+    .width('100%')
+    .height(AppLayout.STATUS_BAR_HEIGHT + AppLayout.SECONDARY_TOP_CONTENT_HEIGHT)
+    .clip(true)
+  }
 
-      if (this.statusText.length > 0) {
-        Text(this.statusText)
-          .fontSize(15)
-          .fontColor('#666666')
-          .padding(12)
-      }
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        if (this.statusText.length > 0) {
+          Text(this.statusText)
+            .fontSize(15)
+            .fontColor('#666666')
+            .padding(12)
+        }
 
-      List() {
-        ForEach(this.results, (item: SearchResultItem) => {
-          ListItem() {
-            Column() {
-              Text(item.title)
-                .fontSize(17)
-                .fontWeight(FontWeight.Medium)
-                .width('100%')
-              Text(item.preview)
-                .fontSize(14)
-                .fontColor('#666666')
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .margin({ top: 6 })
-                .width('100%')
+        List() {
+          ForEach(this.results, (item: SearchResultItem) => {
+            ListItem() {
+              Column() {
+                Text(item.title)
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Medium)
+                  .width('100%')
+                Text(item.preview)
+                  .fontSize(14)
+                  .fontColor('#666666')
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .margin({ top: 6 })
+                  .width('100%')
+              }
+              .width('100%')
+              .padding(14)
+              .onClick(() => {
+                this.openResult(item);
+              })
             }
-            .width('100%')
-            .padding(14)
-            .onClick(() => {
-              this.openResult(item);
-            })
-          }
-        })
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
+      .padding({
+        top: AppLayout.STATUS_BAR_HEIGHT + AppLayout.SECONDARY_TOP_CONTENT_HEIGHT,
+        bottom: AppLayout.BOTTOM_SAFE_HEIGHT
+      })
+
+      this.TopBar()
     }
     .width('100%')
     .height('100%')
+    .backgroundColor('#EEF0F5')
   }
 }

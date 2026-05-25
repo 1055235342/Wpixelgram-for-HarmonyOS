@@ -1,5 +1,6 @@
 import { ChatItem } from '../../model/ChatListModels';
 import { ChatListContent } from './ChatListContent';
+import { AppLayout } from '../../constants/AppLayout';
 
 @Component
 export struct ChatSearchOverlay {
@@ -219,7 +220,7 @@ export struct ChatSearchOverlay {
         this.SearchInputBar()
       }
       .width('100%')
-      .padding({ bottom: 28 })
+      .padding({ bottom: AppLayout.BOTTOM_SAFE_HEIGHT })
     }
     .width('100%')
     .height('100%')

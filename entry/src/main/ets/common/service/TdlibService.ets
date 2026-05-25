@@ -1,5 +1,11 @@
 // entry/src/main/ets/common/service/TdlibService.ets
-import { createNativeClient, sendNativeRequest, receiveNativeUpdate } from 'libtdlib_bridge.so';
+import {
+  createNativeClient,
+  receiveNativeUpdate,
+  sendNativeRequest,
+  startVideoProxy,
+  stopVideoProxy
+} from 'libtdlib_bridge.so';
 
 interface TdBaseRequest {
   '@type': string;
@@ -57,6 +63,15 @@ interface GetChatHistoryRequest extends TdBaseRequest {
   from_message_id: number;
   offset: number;
   limit: number;
+}
+
+interface GetMessageRequest extends TdBaseRequest {
+  chat_id: number;
+  message_id: number;
+}
+
+interface GetChatPinnedMessageRequest extends TdBaseRequest {
+  chat_id: number;
 }
 
 export interface TdTextEntityType {
@@ -127,6 +142,11 @@ interface DownloadFileRequest extends TdBaseRequest {
   synchronous: boolean;
 }
 
+interface CancelDownloadFileRequest extends TdBaseRequest {
+  file_id: number;
+  only_if_pending: boolean;
+}
+
 interface OpenMessageContentRequest extends TdBaseRequest {
   chat_id: number;
   message_id: number;
@@ -157,11 +177,34 @@ interface GetCallbackQueryAnswerRequest extends TdBaseRequest {
   payload: TdCallbackQueryPayload;
 }
 
+interface GetUserFullInfoRequest extends TdBaseRequest {
+  user_id: number;
+}
+
+interface ChatNotificationSettingsRequest extends TdBaseRequest {
+  use_default_mute_for: boolean;
+  mute_for: number;
+  use_default_sound: boolean;
+  sound_id: number;
+  use_default_show_preview: boolean;
+  show_preview: boolean;
+  use_default_disable_pinned_message_notifications: boolean;
+  disable_pinned_message_notifications: boolean;
+  use_default_disable_mention_notifications: boolean;
+  disable_mention_notifications: boolean;
+}
+
+interface SetChatNotificationSettingsRequest extends TdBaseRequest {
+  chat_id: number;
+  notification_settings: ChatNotificationSettingsRequest;
+}
+
 type TdRequest = TdBaseRequest | SetTdlibParametersRequest | PhoneNumberRequest |
   AuthenticationCodeRequest | GetChatsRequest | LoadChatsRequest | GetChatRequest | GetChatHistoryRequest |
-  SendMessageRequest | OptimizeStorageRequest | GetInstalledStickerSetsRequest |
-  SearchChatsOnServerRequest | SearchMessagesRequest | DownloadFileRequest |
-  OpenMessageContentRequest | ViewMessagesRequest | GetMessageLinkInfoRequest | GetCallbackQueryAnswerRequest;
+  GetMessageRequest | GetChatPinnedMessageRequest | SendMessageRequest | OptimizeStorageRequest | GetInstalledStickerSetsRequest |
+  SearchChatsOnServerRequest | SearchMessagesRequest | DownloadFileRequest | CancelDownloadFileRequest |
+  OpenMessageContentRequest | ViewMessagesRequest | GetMessageLinkInfoRequest | GetCallbackQueryAnswerRequest |
+  GetUserFullInfoRequest | SetChatNotificationSettingsRequest;
 
 export interface TdLocalFile {
   path: string;
@@ -223,12 +266,33 @@ export interface TdAnimation {
   animation: TdFile;
 }
 
+export interface TdDocument {
+  file_name?: string;
+  mime_type?: string;
+  minithumbnail?: TdBaseRequest;
+  thumbnail?: TdThumbnail;
+  document: TdFile;
+}
+
+export interface TdAudio {
+  duration?: number;
+  title?: string;
+  performer?: string;
+  file_name?: string;
+  mime_type?: string;
+  album_cover_thumbnail?: TdThumbnail;
+  thumbnail?: TdThumbnail;
+  audio: TdFile;
+}
+
 export interface TdMessageContent {
   type: string;
   text?: FormattedText;
   photo?: TdPhoto;
   video?: TdVideo;
   animation?: TdAnimation;
+  document?: TdDocument;
+  audio?: TdAudio;
   caption?: FormattedText;
 }
 
@@ -250,6 +314,9 @@ export interface TdInlineKeyboardButton {
 export interface TdReplyMarkup {
   type: string;
   rows?: TdInlineKeyboardButton[][];
+  resize_keyboard?: boolean;
+  one_time?: boolean;
+  is_personal?: boolean;
 }
 
 export interface TdTextQuote {
@@ -265,10 +332,17 @@ export interface TdMessageReplyTo {
   quote?: TdTextQuote;
 }
 
+export interface TdMessageInteractionInfo {
+  view_count?: number;
+}
+
 export interface TdMessage {
   id: number;
   chat_id?: number;
   is_outgoing: boolean;
+  is_pinned?: boolean;
+  media_album_id?: number;
+  interaction_info?: TdMessageInteractionInfo;
   date?: number;
   content?: TdMessageContent;
   reply_markup?: TdReplyMarkup;
@@ -277,7 +351,23 @@ export interface TdMessage {
 
 export interface TdChatType {
   type: string;
+  user_id?: number;
   is_channel?: boolean;
+}
+
+export interface TdBotCommand {
+  command: string;
+  description: string;
+}
+
+export interface TdBotInfo {
+  short_description?: string;
+  description?: string;
+  commands?: TdBotCommand[];
+}
+
+export interface TdUserFullInfo {
+  bot_info?: TdBotInfo;
 }
 
 export interface TdChatPosition {
@@ -294,6 +384,11 @@ export interface TdChatPhotoInfo {
   is_personal?: boolean;
 }
 
+export interface TdChatNotificationSettings {
+  mute_for?: number;
+  use_default_mute_for?: boolean;
+}
+
 export interface TdChat {
   id: number;
   title: string;
@@ -305,16 +400,33 @@ export interface TdChat {
   last_read_inbox_message_id?: number;
   last_read_outbox_message_id?: number;
   positions?: TdChatPosition[];
+  reply_markup_message_id?: number;
+  notification_settings?: TdChatNotificationSettings;
 }
 
 export interface TdUser {
+  id?: number;
   first_name: string;
   last_name?: string;
   phone_number: string;
+  profile_photo?: TdChatPhotoInfo;
 }
 
 export interface TdStorageStatistic {
   size: number;
+}
+
+export interface TdStorageStatisticsByFileType {
+  file_type?: TdTypeObject;
+  size: number;
+  count?: number;
+}
+
+export interface TdStorageStatisticsByChat {
+  chat_id: number;
+  size: number;
+  count?: number;
+  by_file_type?: TdStorageStatisticsByFileType[];
 }
 
 export interface TdAuthorizationState {
@@ -334,14 +446,23 @@ export interface TdUpdate {
   last_read_outbox_message_id?: number;
   positions?: TdChatPosition[];
   position?: TdChatPosition;
+  reply_markup_message_id?: number;
+  notification_settings?: TdChatNotificationSettings;
   chat_type?: TdChatType;
   photo?: TdChatPhotoInfo;
   title?: string;
   id?: number;
+  first_name?: string;
+  last_name?: string;
+  phone_number?: string;
+  profile_photo?: TdChatPhotoInfo;
   last_message?: TdMessage;
   user_ids?: number[];
   messages?: TdMessage[];
   message?: TdMessage;
+  is_outgoing?: boolean;
+  content?: TdMessageContent;
+  reply_to?: TdMessageReplyTo;
   next_offset?: string;
   next_from_message_id?: number;
   message_id?: number;
@@ -354,7 +475,20 @@ export interface TdUpdate {
   text?: string;
   show_alert?: boolean;
   user?: TdUser;
+  bot_info?: TdBotInfo;
+  commands?: TdBotCommand[];
+  user_id?: number;
+  user_full_info?: TdUserFullInfo;
   statistics?: TdStorageStatistic[];
+  size?: number;
+  count?: number;
+  by_chat?: TdStorageStatisticsByChat[];
+  by_file_type?: TdStorageStatisticsByFileType[];
+  files_size?: number;
+  file_count?: number;
+  database_size?: number;
+  language_pack_database_size?: number;
+  log_size?: number;
 }
 
 type UpdateListener = (update: TdUpdate) => void;
@@ -383,8 +517,14 @@ export class TdlibService {
 
   public sendRequest(request: TdRequest): void {
     const requestJson = JSON.stringify(request);
-    console.info(`[TdlibService] request clientId=${this.clientId} params=${requestJson}`);
+    console.info(`[TdlibService] request clientId=${this.clientId} params=${this.maskSensitiveRequest(requestJson)}`);
     sendNativeRequest(this.clientId, requestJson);
+  }
+
+  private maskSensitiveRequest(requestJson: string): string {
+    return requestJson
+      .replace(/"api_hash":"[^"]*"/g, '"api_hash":"***"')
+      .replace(/"database_encryption_key":"[^"]*"/g, '"database_encryption_key":"***"');
   }
 
   public startPolling(interval: number = 0.1): void {
@@ -478,6 +618,9 @@ export class TdlibService {
   public checkAuthenticationCode(code: string): void {
     this.sendRequest({ '@type': 'checkAuthenticationCode', code: code });
   }
+  public getAuthorizationState(): void {
+    this.sendRequest({ '@type': 'getAuthorizationState' });
+  }
   public getChats(limit: number = 20): void {
     this.sendRequest({ '@type': 'getChats', chat_list: { '@type': 'chatListMain' }, limit: limit });
   }
@@ -487,6 +630,31 @@ export class TdlibService {
   public getChat(chatId: number): void {
     this.sendRequest({ '@type': 'getChat', chat_id: chatId });
   }
+  public setChatNotificationMute(chatId: number, muteFor: number): void {
+    this.sendRequest({
+      '@type': 'setChatNotificationSettings',
+      chat_id: chatId,
+      notification_settings: {
+        '@type': 'chatNotificationSettings',
+        use_default_mute_for: false,
+        mute_for: muteFor,
+        use_default_sound: true,
+        sound_id: 0,
+        use_default_show_preview: true,
+        show_preview: true,
+        use_default_disable_pinned_message_notifications: true,
+        disable_pinned_message_notifications: false,
+        use_default_disable_mention_notifications: true,
+        disable_mention_notifications: false
+      }
+    });
+  }
+  public openChat(chatId: number): void {
+    this.sendRequest({ '@type': 'openChat', chat_id: chatId });
+  }
+  public closeChat(chatId: number): void {
+    this.sendRequest({ '@type': 'closeChat', chat_id: chatId });
+  }
   public getChatHistory(chatId: number, limit: number = 20, fromMessageId: number = 0, offset: number = 0): void {
     this.sendRequest({
       '@type': 'getChatHistory',
@@ -495,6 +663,12 @@ export class TdlibService {
       offset: offset,
       limit: limit
     });
+  }
+  public getMessage(chatId: number, messageId: number): void {
+    this.sendRequest({ '@type': 'getMessage', chat_id: chatId, message_id: messageId });
+  }
+  public getChatPinnedMessage(chatId: number): void {
+    this.sendRequest({ '@type': 'getChatPinnedMessage', chat_id: chatId });
   }
   public sendMessage(chatId: number, text: string): void {
     this.sendRequest({
@@ -512,6 +686,9 @@ export class TdlibService {
   public getMe(): void {
     this.sendRequest({ '@type': 'getMe' });
   }
+  public getUserFullInfo(userId: number): void {
+    this.sendRequest({ '@type': 'getUserFullInfo', user_id: userId });
+  }
   public optimizeStorage(fileTypes: string[], size: number = 0, ttl: number = 30*24*3600): void {
     const types: FileType[] = fileTypes.map((t: string): FileType => {
       return { '@type': t };
@@ -528,6 +705,26 @@ export class TdlibService {
       return_deleted_file_statistics: true,
       chat_limit: 0
     });
+  }
+  public optimizeStorageAdvanced(fileTypes: string[], chatIds: number[], size: number = 0, ttl: number = 0): void {
+    const types: FileType[] = fileTypes.map((t: string): FileType => {
+      return { '@type': t };
+    });
+    this.sendRequest({
+      '@type': 'optimizeStorage',
+      size: size,
+      ttl: ttl,
+      count: -1,
+      immunity_delay: -1,
+      file_types: types,
+      chat_ids: chatIds,
+      exclude_chat_ids: [],
+      return_deleted_file_statistics: true,
+      chat_limit: 100
+    });
+  }
+  public getStorageStatistics(chatLimit: number = 100): void {
+    this.sendRequest({ '@type': 'getStorageStatistics', chat_limit: chatLimit });
   }
   public getInstalledStickerSets(): void {
     this.sendRequest({ '@type': 'getInstalledStickerSets', is_masks: false });
@@ -557,6 +754,25 @@ export class TdlibService {
       limit: limit,
       synchronous: false
     });
+  }
+  /**
+   * 暂停/取消正在下载的文件（退出视频时调用）
+   * @param fileId 要暂停的文件ID
+   */
+  public cancelDownloadFile(fileId: number): void {
+    const request: CancelDownloadFileRequest = {
+      '@type': 'cancelDownloadFile',
+      file_id: fileId,
+      only_if_pending: false
+    };
+    this.sendRequest(request);
+  }
+  public startVideoProxy(fileId: number, localPath: string, totalSize: number,
+    downloadedPrefixSize: number, downloadedSize: number, isCompleted: boolean): string {
+    return startVideoProxy(this.clientId, fileId, localPath, totalSize, downloadedPrefixSize, downloadedSize, isCompleted);
+  }
+  public stopVideoProxy(fileId: number): void {
+    stopVideoProxy(fileId);
   }
   public openMessageContent(chatId: number, messageId: number): void {
     this.sendRequest({ '@type': 'openMessageContent', chat_id: chatId, message_id: messageId });

@@ -14,6 +14,7 @@ import {
   createChatItem,
   createLoadingChat,
   getAvatarText,
+  hasMainChatPosition,
   getLocalPath,
   getMessagePreview,
   getMessageTime,
@@ -28,6 +29,8 @@ import {
   HdsTabsController,
   hdsMaterial
 } from '@kit.UIDesignKit';
+import { curves } from '@kit.ArkUI';
+import { AppLayout } from '../common/constants/AppLayout';
 
 export { ChatSelection } from '../common/model/ChatListModels';
 
@@ -45,11 +48,14 @@ export struct ChatListPage {
   @State activeCategory: string = '全部';
   @State activeBottomTab: string = 'chat';
   @State statusText: string = '';
+  @State searchBtnScale: number = 1;
+  @State headerStatusText: string = '连接中...';
   @State searchVisible: boolean = false;
   @State tabsSlideOut: boolean = false;
   @State contextMenuVisible: boolean = false;
   @State contextPreviewLoading: boolean = false;
   @State contextPreviewMessages: PreviewMessageItem[] = [];
+  @State contextOverlayOpacity: number = 0;
   @State contextPreviewScale: number = 0.82;
   @State contextPreviewOpacity: number = 1;
   @State contextPreviewTranslateY: number = 14;
@@ -62,6 +68,7 @@ export struct ChatListPage {
   @State contextMenuTop: number = 382;
   @State contextLayerWidth: number = 390;
   @State contextLayerHeight: number = 780;
+  @StorageLink('appDarkMode') isDarkMode: boolean = false;
   @State contextChat: ChatItem = {
     id: 0,
     title: '',
@@ -76,32 +83,66 @@ export struct ChatListPage {
     avatarText: '',
     avatarColor: '#2F80ED',
     avatarPath: '',
-    avatarFileId: 0
+    avatarFileId: 0,
+    version: 0
   };
   embedded: boolean = false;
   selectedChatId: number = 0;
   onChatSelected: (selection: ChatSelection) => void = (selection: ChatSelection): void => {};
   private td = TdlibService.getInstance();
   private listenersRegistered: boolean = false;
+  private listenerDisposers: (() => void)[] = [];
+  private listenerDisposeToken: number = 0;
+  private requestedChatIds: Set<number> = new Set();
   private chatScroller: Scroller = new Scroller();
   private tabsController: HdsTabsController = new HdsTabsController();
-  private chatRequestLimit: number = 20;
+  private chatRequestLimit: number = 100;
+  private contextCloseToken: number = 0;
+  private searchMiniBarAnimationToken: number = 0;
   private chatLoadMoreInFlight: boolean = false;
   private chatAutoFillAttempts: number = 0;
   private contextPreviewChatId: number = 0;
+  private pinnedStateByChatId: Map<number, boolean> = new Map();
 
   aboutToAppear() {
+    this.listenerDisposeToken++;
     this.registerListeners();
     this.requestInitialChats();
   }
 
+  aboutToDisappear() {
+    const disposeToken = ++this.listenerDisposeToken;
+    setTimeout(() => {
+      if (this.listenerDisposeToken !== disposeToken) {
+        return;
+      }
+      this.listenerDisposers.forEach((dispose: () => void) => {
+        dispose();
+      });
+      this.listenerDisposers = [];
+      this.listenersRegistered = false;
+      this.requestedChatIds.clear();
+    }, 1200);
+  }
+
   private requestInitialChats(): void {
-    this.chatRequestLimit = 20;
+    this.chatRequestLimit = 100;
     this.chatLoadMoreInFlight = false;
     this.chatAutoFillAttempts = 0;
+    this.headerStatusText = '数据更新中...';
     console.info(`[ChatListPage] request initial chats limit=${this.chatRequestLimit}`);
     this.td.loadChats(this.chatRequestLimit);
-    this.td.getChats(this.chatRequestLimit);
+    setTimeout(() => {
+      this.td.getChats(this.chatRequestLimit);
+    }, 500);
+  }
+
+  private scheduleHeaderStatusClose(delay: number = 900): void {
+    setTimeout(() => {
+      if (this.activeBottomTab === 'chat') {
+        this.headerStatusText = '';
+      }
+    }, delay);
   }
 
   private loadMoreChats(): void {
@@ -109,12 +150,10 @@ export struct ChatListPage {
       return;
     }
     this.chatLoadMoreInFlight = true;
-    this.chatRequestLimit += 20;
+    this.chatRequestLimit += 100;
     console.info(`[ChatListPage] load more chats limit=${this.chatRequestLimit}`);
-    this.td.loadChats(20);
-    this.td.getChats(this.chatRequestLimit);
+    this.td.loadChats(100);
     setTimeout(() => {
-      this.chatLoadMoreInFlight = false;
       this.td.getChats(this.chatRequestLimit);
     }, 650);
   }
@@ -124,9 +163,15 @@ export struct ChatListPage {
       return;
     }
     this.listenersRegistered = true;
-    this.td.onUpdate('chats', (update: TdUpdate) => {
+    this.listenUpdate('authorizationStateReady', (_update: TdUpdate) => {
+      console.info('[ChatListPage] authorization ready');
+      this.headerStatusText = '数据更新中...';
+      this.requestInitialChats();
+    });
+    this.listenUpdate('chats', (update: TdUpdate) => {
       const chatIds: number[] = update.chat_ids ? update.chat_ids : [];
       console.info(`[ChatListPage] received chats count=${chatIds.length}`);
+      this.headerStatusText = '数据更新中...';
       this.chatLoadMoreInFlight = false;
       this.applyChatIds(chatIds);
       if (this.activeBottomTab === 'chat' && chatIds.length < this.chatRequestLimit && this.chatAutoFillAttempts < 3) {
@@ -135,11 +180,11 @@ export struct ChatListPage {
           this.loadMoreChats();
         }, 350);
       }
-      chatIds.forEach((id: number) => {
-        this.td.getChat(id);
-      });
+      this.requestMissingChatDetails(chatIds);
+      this.scheduleMissingChatRetry(chatIds);
+      this.scheduleHeaderStatusClose();
     });
-    this.td.onUpdate('chat', (update: TdUpdate) => {
+    this.listenUpdate('chat', (update: TdUpdate) => {
       if (update.id !== undefined && update.title !== undefined) {
         const chat: TdChat = {
           id: update.id,
@@ -157,32 +202,32 @@ export struct ChatListPage {
         this.upsertChat(chat);
       }
     });
-    this.td.onUpdate('updateNewChat', (update: TdUpdate) => {
+    this.listenUpdate('updateNewChat', (update: TdUpdate) => {
       if (update.chat) {
         console.info(`[ChatListPage] received updateNewChat id=${update.chat.id}, title=${update.chat.title}`);
         this.upsertChat(update.chat);
       }
     });
-    this.td.onUpdate('updateChatTitle', (update: TdUpdate) => {
+    this.listenUpdate('updateChatTitle', (update: TdUpdate) => {
       if (update.chat_id !== undefined && update.title !== undefined) {
         console.info(`[ChatListPage] received updateChatTitle id=${update.chat_id}, title=${update.title}`);
         this.updateChatTitle(update.chat_id, update.title);
       }
     });
-    this.td.onUpdate('updateChatLastMessage', (update: TdUpdate) => {
+    this.listenUpdate('updateChatLastMessage', (update: TdUpdate) => {
       if (update.chat_id !== undefined) {
         console.info(`[ChatListPage] received updateChatLastMessage id=${update.chat_id}`);
         this.ensureChatPlaceholder(update.chat_id);
         this.updateChatLastMessage(update.chat_id, update.last_message);
       }
     });
-    this.td.onUpdate('updateChatReadInbox', (update: TdUpdate) => {
+    this.listenUpdate('updateChatReadInbox', (update: TdUpdate) => {
       if (update.chat_id !== undefined && update.unread_count !== undefined) {
         console.info(`[ChatListPage] received updateChatReadInbox id=${update.chat_id}, unread=${update.unread_count}`);
         this.updateUnreadCount(update.chat_id, update.unread_count, update.last_read_inbox_message_id);
       }
     });
-    this.td.onUpdate('updateChatPosition', (update: TdUpdate) => {
+    this.listenUpdate('updateChatPosition', (update: TdUpdate) => {
       if (update.chat_id !== undefined) {
         console.info(`[ChatListPage] received updateChatPosition id=${update.chat_id}, position=${JSON.stringify(update.position)}, positions=${JSON.stringify(update.positions)}`);
         this.ensureChatPlaceholder(update.chat_id);
@@ -195,48 +240,88 @@ export struct ChatListPage {
         }
       }
     });
-    this.td.onUpdate('file', (update: TdUpdate) => {
+    this.listenUpdate('file', (update: TdUpdate) => {
       if (update.file) {
         console.info(`[ChatListPage] received file id=${update.file.id}`);
         this.applyAvatarFileUpdate(update.file);
       }
     });
-    this.td.onUpdate('updateFile', (update: TdUpdate) => {
+    this.listenUpdate('updateFile', (update: TdUpdate) => {
       if (update.file) {
         console.info(`[ChatListPage] received updateFile id=${update.file.id}`);
         this.applyAvatarFileUpdate(update.file);
       }
     });
-    this.td.onUpdate('messages', (update: TdUpdate) => {
+    this.listenUpdate('messages', (update: TdUpdate) => {
       this.applyContextPreviewMessages(update.messages ? update.messages : []);
+    });
+  }
+
+  private listenUpdate(type: string, callback: (update: TdUpdate) => void): void {
+    this.td.onUpdate(type, callback);
+    this.listenerDisposers.push(() => {
+      this.td.offUpdate(type, callback);
     });
   }
 
   private applyChatIds(chatIds: number[]): void {
     const nextChats: ChatItem[] = [];
     const seenIds: Set<number> = new Set();
+    const existingMap: Map<number, ChatItem> = new Map(this.chats.map((item: ChatItem): [number, ChatItem] => [item.id, item]));
     chatIds.forEach((id: number) => {
       if (seenIds.has(id)) {
         console.warn(`[ChatListPage] skip duplicate chat id from getChats id=${id}`);
         return;
       }
       seenIds.add(id);
-      const current = this.findChat(id);
-      if (current) {
-        nextChats.push(current);
+      if (existingMap.has(id)) {
+        nextChats.push(existingMap.get(id)!);
       } else {
         nextChats.push(createLoadingChat(id));
       }
     });
-    if (chatIds.length < this.chats.length) {
-      this.chats.forEach((item: ChatItem) => {
-        if (!seenIds.has(item.id)) {
-          seenIds.add(item.id);
-          nextChats.push(item);
+    this.chats = this.dedupeChats(nextChats);
+  }
+
+  private requestMissingChatDetails(chatIds: number[]): void {
+    chatIds.forEach((id: number) => {
+      const current = this.findChat(id);
+      if (current && !this.isChatPlaceholder(current)) {
+        return;
+      }
+      if (this.requestedChatIds.has(id)) {
+        return;
+      }
+      this.requestedChatIds.add(id);
+      this.td.getChat(id);
+    });
+  }
+
+  private scheduleMissingChatRetry(chatIds: number[]): void {
+    const ids = chatIds.slice();
+    setTimeout(() => {
+      const missingIds: number[] = [];
+      ids.forEach((id: number) => {
+        const current = this.findChat(id);
+        if (!current || this.isChatPlaceholder(current)) {
+          missingIds.push(id);
+          this.requestedChatIds.delete(id);
         }
       });
-    }
-    this.chats = nextChats;
+      if (missingIds.length === 0) {
+        return;
+      }
+      console.warn(`[ChatListPage] retry missing chat details count=${missingIds.length}`);
+      this.requestMissingChatDetails(missingIds);
+    }, 1600);
+  }
+
+  private isChatPlaceholder(item: ChatItem): boolean {
+    return item.title === `Chat ${item.id}` || item.lastMessage === '加载中...' || item.avatarText === 'C';
+  }
+
+  private nextChatVersion(item: ChatItem): number {
+    return (item.version !== undefined ? item.version : 0) + 1;
   }
 
   private dedupeChats(items: ChatItem[]): ChatItem[] {
@@ -261,7 +346,10 @@ export struct ChatListPage {
     const nextChats = this.chats.slice();
     nextChats.push(createLoadingChat(chatId));
     this.chats = this.dedupeChats(nextChats);
-    this.td.getChat(chatId);
+    if (!this.requestedChatIds.has(chatId)) {
+      this.requestedChatIds.add(chatId);
+      this.td.getChat(chatId);
+    }
   }
 
   private upsertChat(chat: TdChat): void {
@@ -269,7 +357,11 @@ export struct ChatListPage {
     const nextChats = this.chats.slice();
     const index = nextChats.findIndex((current: ChatItem): boolean => current.id === chat.id);
     const item: ChatItem = createChatItem(chat);
-    const nextItem: ChatItem = index >= 0 && chat.positions === undefined ? {
+    const pinnedFromMainPosition = hasMainChatPosition(chat.positions);
+    const cachedPinned = this.pinnedStateByChatId.get(chat.id);
+    const shouldPreservePinned = !pinnedFromMainPosition;
+    const preservedPinned = cachedPinned !== undefined ? cachedPinned : (index >= 0 ? nextChats[index].isPinned : item.isPinned);
+    const nextItem: ChatItem = shouldPreservePinned ? {
       id: item.id,
       title: item.title,
       lastMessage: item.lastMessage,
@@ -278,20 +370,29 @@ export struct ChatListPage {
       lastReadInboxMessageId: item.lastReadInboxMessageId,
       isOutgoing: item.isOutgoing,
       isRead: item.isRead,
-      isPinned: nextChats[index].isPinned,
+      isPinned: preservedPinned,
       category: item.category,
       avatarText: item.avatarText,
       avatarColor: item.avatarColor,
       avatarPath: item.avatarPath,
-      avatarFileId: item.avatarFileId
+      avatarFileId: item.avatarFileId,
+      version: index >= 0 ? this.nextChatVersion(nextChats[index]) : 1
     } : item;
-    console.info(`[ChatListPage] upsert chat id=${chat.id}, pinned=${nextItem.isPinned}, rawPositions=${JSON.stringify(chat.positions)}`);
+    if (!shouldPreservePinned && index >= 0) {
+      nextItem.version = this.nextChatVersion(nextChats[index]);
+    }
+    if (pinnedFromMainPosition) {
+      this.pinnedStateByChatId.set(chat.id, nextItem.isPinned);
+    }
+    this.requestedChatIds.delete(chat.id);
+    console.info(`[ChatListPage] upsert chat id=${chat.id}, pinned=${nextItem.isPinned}, rawPositions=${JSON.stringify(chat.positions)}, preservePinned=${shouldPreservePinned}`);
     if (index >= 0) {
       nextChats[index] = nextItem;
     } else {
       nextChats.push(nextItem);
     }
     this.chats = this.dedupeChats(nextChats);
+    this.scheduleHeaderStatusClose();
   }
 
   private updateChatTitle(chatId: number, title: string): void {
@@ -312,7 +413,8 @@ export struct ChatListPage {
         avatarText: getAvatarText(title),
         avatarColor: nextChats[index].avatarColor,
         avatarPath: nextChats[index].avatarPath,
-        avatarFileId: nextChats[index].avatarFileId
+        avatarFileId: nextChats[index].avatarFileId,
+        version: this.nextChatVersion(nextChats[index])
       };
       this.chats = nextChats;
     }
@@ -336,7 +438,8 @@ export struct ChatListPage {
         avatarText: nextChats[index].avatarText,
         avatarColor: nextChats[index].avatarColor,
         avatarPath: nextChats[index].avatarPath,
-        avatarFileId: nextChats[index].avatarFileId
+        avatarFileId: nextChats[index].avatarFileId,
+        version: this.nextChatVersion(nextChats[index])
       };
       this.chats = nextChats;
     }
@@ -360,7 +463,8 @@ export struct ChatListPage {
         avatarText: nextChats[index].avatarText,
         avatarColor: nextChats[index].avatarColor,
         avatarPath: nextChats[index].avatarPath,
-        avatarFileId: nextChats[index].avatarFileId
+        avatarFileId: nextChats[index].avatarFileId,
+        version: this.nextChatVersion(nextChats[index])
       };
       this.chats = nextChats;
     }
@@ -372,6 +476,7 @@ export struct ChatListPage {
   }
 
   private updatePinnedState(chatId: number, isPinned: boolean): void {
+    this.pinnedStateByChatId.set(chatId, isPinned);
     const nextChats = this.chats.slice();
     const index = nextChats.findIndex((current: ChatItem): boolean => current.id === chatId);
     if (index >= 0) {
@@ -389,7 +494,8 @@ export struct ChatListPage {
         avatarText: nextChats[index].avatarText,
         avatarColor: nextChats[index].avatarColor,
         avatarPath: nextChats[index].avatarPath,
-        avatarFileId: nextChats[index].avatarFileId
+        avatarFileId: nextChats[index].avatarFileId,
+        version: this.nextChatVersion(nextChats[index])
       };
       this.chats = nextChats;
     }
@@ -431,7 +537,8 @@ export struct ChatListPage {
         avatarText: item.avatarText,
         avatarColor: item.avatarColor,
         avatarPath: path,
-        avatarFileId: item.avatarFileId
+        avatarFileId: item.avatarFileId,
+        version: this.nextChatVersion(item)
       };
     });
     if (changed) {
@@ -460,7 +567,7 @@ export struct ChatListPage {
     if (previewItems.length === 0) {
       return;
     }
-    this.contextPreviewMessages = previewItems.slice(Math.max(0, previewItems.length - 4));
+    this.contextPreviewMessages = previewItems.slice(Math.max(0, previewItems.length - 5));
     this.contextPreviewLoading = false;
     console.info(`[ChatListPage] context preview messages loaded chatId=${this.contextPreviewChatId}, count=${this.contextPreviewMessages.length}`);
   }
@@ -475,7 +582,7 @@ export struct ChatListPage {
         placeholder: false
       });
     }
-    while (items.length < 4) {
+    while (items.length < 5) {
       items.push({
         id: `placeholder-${items.length}`,
         text: '读取消息中...',
@@ -508,7 +615,6 @@ export struct ChatListPage {
   private openChat(item: ChatItem): void {
     console.info(`[ChatListPage] chat item clicked chatId=${item.id}, title=${item.title}`);
     this.closeContextMenu();
-    this.markChatUnreadCleared(item.id);
     if (this.embedded) {
       this.onChatSelected({
         chatId: item.id,
@@ -643,13 +749,13 @@ export struct ChatListPage {
 
   private layoutContextMenu(centerX: number, centerY: number): void {
     const previewWidth = 304;
-    const previewHeight = 250;
+    const previewHeight = 400;
     const menuWidth = 214;
     const menuHeight = 228;
     const gap = 10;
     const sidePadding = 12;
     const topPadding = 70;
-    const bottomPadding = 98;
+    const bottomPadding = AppLayout.BOTTOM_SAFE_HEIGHT + 70;
     const layerWidth = this.contextLayerWidth > 0 ? this.contextLayerWidth : 390;
     const layerHeight = this.contextLayerHeight > 0 ? this.contextLayerHeight : 780;
     const maxPreviewLeft = layerWidth - previewWidth - sidePadding;
@@ -666,19 +772,23 @@ export struct ChatListPage {
   private openContextMenu(item: ChatItem, centerX: number, centerY: number): void {
     console.info(`[ChatListPage] long press menu open chatId=${item.id}, title=${item.title}, x=${centerX}, y=${centerY}`);
     this.triggerLongPressHaptic();
+    this.contextCloseToken++;
     this.contextChat = item;
     this.contextPreviewChatId = item.id;
     this.contextPreviewLoading = true;
     this.contextPreviewMessages = this.getPreviewPlaceholders(item);
     this.layoutContextMenu(centerX, centerY);
+    this.contextOverlayOpacity = 0;
     this.contextPreviewScale = 0.82;
-    this.contextPreviewOpacity = 1;
+    this.contextPreviewOpacity = 0;
     this.contextPreviewTranslateY = 14;
     this.contextMenuScale = 0.9;
     this.contextMenuOpacity = 0;
     this.contextMenuTranslateY = 10;
     this.contextMenuVisible = true;
     setTimeout(() => {
+      this.contextOverlayOpacity = 1;
+      this.contextPreviewOpacity = 1;
       this.contextPreviewScale = 1.06;
       this.contextPreviewTranslateY = 0;
     }, 16);
@@ -698,15 +808,29 @@ export struct ChatListPage {
       return;
     }
     console.info('[ChatListPage] long press menu close');
-    this.contextMenuVisible = false;
-    this.contextPreviewLoading = false;
-    this.contextPreviewChatId = 0;
-    this.contextPreviewScale = 0.82;
-    this.contextPreviewOpacity = 1;
+    const closeToken = ++this.contextCloseToken;
+    this.contextOverlayOpacity = 0;
+    this.contextPreviewOpacity = 0;
+    this.contextPreviewScale = 0.86;
     this.contextPreviewTranslateY = 14;
     this.contextMenuScale = 0.9;
     this.contextMenuOpacity = 0;
     this.contextMenuTranslateY = 10;
+    setTimeout(() => {
+      if (this.contextCloseToken !== closeToken) {
+        return;
+      }
+      this.contextMenuVisible = false;
+      this.contextOverlayOpacity = 0;
+      this.contextPreviewScale = 0.82;
+      this.contextPreviewOpacity = 1;
+      this.contextPreviewTranslateY = 14;
+      this.contextMenuScale = 0.9;
+      this.contextMenuOpacity = 0;
+      this.contextMenuTranslateY = 10;
+      this.contextPreviewLoading = false;
+      this.contextPreviewChatId = 0;
+    }, 170);
   }
 
   private handleContextAction(action: string): void {
@@ -797,22 +921,22 @@ export struct ChatListPage {
   @Builder
   private ChatPreviewCard(item: ChatItem) {
     Stack({ alignContent: Alignment.TopStart }) {
-      Image($r('app.media.phone_bg_01'))
-        .width('100%')
-        .height('100%')
-        .objectFit(ImageFit.Cover)
+      if (this.isDarkMode) {
+        Image($r('app.media.phone_bg_04'))
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+      } else {
+        Image($r('app.media.phone_bg_01'))
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+      }
 
       Column()
         .width('100%')
         .height('100%')
-        .linearGradient({
-          direction: GradientDirection.Right,
-          colors: [
-            ['#56C19E', 0.0],
-            ['#8EBADA', 0.52],
-            ['#E6E06C', 1.0]
-          ]
-        })
+        .backgroundColor('#00FFFFFF')
 
       Row() {
         Blank()
@@ -824,6 +948,8 @@ export struct ChatListPage {
             .fontColor('#111111')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('80%')
+            .textAlign(TextAlign.Center)
           Text(this.contextPreviewLoading ? '读取最近消息...' : '最近消息')
             .fontSize(10)
             .fontColor('#7C847D')
@@ -852,7 +978,7 @@ export struct ChatListPage {
       .margin({ top: 66 })
     }
     .width(304)
-    .height(250)
+    .height(400)
     .borderRadius(22)
     .clip(true)
     .shadow({ radius: 16, color: '#24000000', offsetY: 8 })
@@ -899,20 +1025,7 @@ export struct ChatListPage {
     .width(190)
     .padding({ top: 8, bottom: 8 })
     .borderRadius(20)
-    .backgroundColor('#F7FFFFFF')
-    .backgroundBlurStyle(BlurStyle.Thin, {
-      colorMode: ThemeColorMode.LIGHT,
-      adaptiveColor: AdaptiveColor.AVERAGE,
-      scale: 1.0
-    })
-    .backgroundEffect({
-      radius: 24,
-      saturation: 1.8,
-      brightness: 1.08,
-      color: '#ECFFFFFF',
-      adaptiveColor: AdaptiveColor.AVERAGE
-    })
-    .lightUpEffect(0.88)
+    .backgroundColor('#FFFFFF')
     .border({ width: 1, color: '#FFFFFFFF' })
   }
 
@@ -922,7 +1035,10 @@ export struct ChatListPage {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor('#77000000')
+        .backgroundColor('#18696969')
+        .backdropBlur(100)
+        .opacity(this.contextOverlayOpacity)
+        .animation({ duration: 150, curve: Curve.EaseOut })
         .onClick(() => {
           this.closeContextMenu();
         })
@@ -931,7 +1047,7 @@ export struct ChatListPage {
         this.ChatPreviewCard(this.contextChat)
       }
       .width(304)
-      .height(250)
+      .height(400)
       .position({ x: this.contextPreviewLeft, y: this.contextPreviewTop })
       .opacity(this.contextPreviewOpacity)
       .scale({
@@ -963,14 +1079,13 @@ export struct ChatListPage {
   }
 
   @Builder
-  private BottomTab(label: string, tabKey: string, normalIcon: Resource, selectedIcon: Resource, badge: number) {
+  private BottomTab(label: string, tabKey: string, normalIcon: Resource, selectedIcon: Resource) {
     ChatBottomTabItem({
       label: label,
       tabKey: tabKey,
       activeTab: this.activeBottomTab,
       normalIcon: normalIcon,
-      selectedIcon: selectedIcon,
-      badge: badge
+      selectedIcon: selectedIcon
     })
   }
 
@@ -986,6 +1101,12 @@ export struct ChatListPage {
     .height(54)
     .borderRadius(27)
     .backgroundColor('#F7FCFF')
+    .scale({
+      x: this.searchBtnScale,
+      y: this.searchBtnScale,
+      centerX: '50%',
+      centerY: '50%'
+    })
     .linearGradient({
       direction: GradientDirection.Bottom,
       colors: [
@@ -997,20 +1118,32 @@ export struct ChatListPage {
     .border({ width: 1, color: '#F8FFFFFF' })
     .backdropBlur(18)
     .shadow({ radius: 18, color: '#2A0A84FF', offsetY: 5 })
+    .animation({
+      duration: 260,
+      curve: curves.interpolatingSpring(8, 1, 260, 18)
+    })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.searchBtnScale = 1.1;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      }
+    })
     .onClick(() => {
-      this.openSearchOverlay();
+      setTimeout(() => {
+        this.openSearchOverlay();
+      }, 120);
     })
   }
 
   @Builder
   private TabExitOverlay() {
     Row() {
-      this.BottomTab('联系人', 'contacts', $r('app.media.bar_user'), $r('app.media.bar_user_select'), 0)
-      this.BottomTab('通话', 'calls', $r('app.media.bar_phone'), $r('app.media.bar_phone_select'), 0)
+      this.BottomTab('联系人', 'contacts', $r('app.media.bar_user'), $r('app.media.bar_user_select'))
+      this.BottomTab('通话', 'calls', $r('app.media.bar_phone'), $r('app.media.bar_phone_select'))
       Blank()
         .width(68)
-      this.BottomTab('Telegram', 'chat', $r('app.media.bar_msg'), $r('app.media.bar_msg_select'), this.getUnreadTotal())
-      this.BottomTab('设置', 'settings', $r('app.media.bar_setting'), $r('app.media.bar_setting_select'), 0)
+      this.BottomTab('聊天', 'chat', $r('app.media.bar_msg'), $r('app.media.bar_msg_select'))
+      this.BottomTab('设置', 'settings', $r('app.media.bar_setting'), $r('app.media.bar_setting_select'))
     }
     .width('100%')
     .height(56)
@@ -1029,16 +1162,17 @@ export struct ChatListPage {
       TabContent() {
         ContactsPage()
       }
-      .tabBar(this.BottomTab('联系人', 'contacts', $r('app.media.bar_user'), $r('app.media.bar_user_select'), 0))
+      .tabBar(this.BottomTab('联系人', 'contacts', $r('app.media.bar_user'), $r('app.media.bar_user_select')))
 
       TabContent() {
         CallsContent()
       }
-      .tabBar(this.BottomTab('通话', 'calls', $r('app.media.bar_phone'), $r('app.media.bar_phone_select'), 0))
+      .tabBar(this.BottomTab('通话', 'calls', $r('app.media.bar_phone'), $r('app.media.bar_phone_select')))
 
       TabContent() {
         ChatListContent({
           statusText: this.statusText,
+          headerStatusText: this.headerStatusText,
           chats: this.getVisibleChats(),
           selectedChatId: this.selectedChatId,
           searchTransition: this.searchVisible,
@@ -1057,12 +1191,12 @@ export struct ChatListPage {
           }
         })
       }
-      .tabBar(this.BottomTab('Telegram', 'chat', $r('app.media.bar_msg'), $r('app.media.bar_msg_select'), this.getUnreadTotal()))
+      .tabBar(this.BottomTab('聊天', 'chat', $r('app.media.bar_msg'), $r('app.media.bar_msg_select')))
 
       TabContent() {
         ProfilePage()
       }
-      .tabBar(this.BottomTab('设置', 'settings', $r('app.media.bar_setting'), $r('app.media.bar_setting_select'), 0))
+      .tabBar(this.BottomTab('设置', 'settings', $r('app.media.bar_setting'), $r('app.media.bar_setting_select')))
     }
     .width('100%')
     .height('100%')
@@ -1076,7 +1210,7 @@ export struct ChatListPage {
     .barBackgroundColor(Color.Transparent)
     .barFloatingStyle({
       barSideMargin: 20,
-      barBottomMargin: 28,
+      barBottomMargin: AppLayout.FLOATING_TAB_BOTTOM,
       // lightColor: '#B3FFFFFF',
       // thermoCtrl: true,
       // barOpacity: this.searchVisible ? 0 : 1,
@@ -1128,7 +1262,7 @@ export struct ChatListPage {
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.End)
-        .padding({ left: 20, right: 20, bottom: 28 })
+        .padding({ left: 20, right: 20, bottom: AppLayout.BOTTOM_SAFE_HEIGHT })
 
         ChatSearchOverlay({
           visible: this.searchVisible,
