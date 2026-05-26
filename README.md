@@ -35,7 +35,6 @@ entry/src/main/resources/rawfile/
 
 根据目录里的 `*.example.json` 创建本地配置文件，并填写自己的 `api_id` 和 `api_hash`。
 
-注意：真实密钥、本地缓存、构建产物、编辑器交换文件不要提交到仓库。
 
 ## 构建
 
