@@ -44,3 +44,15 @@ entry/src/main/resources/rawfile/
 ## 说明
 
 当前项目还在迭代中，重点关注消息同步、媒体播放、未读状态、存储统计和页面性能。
+
+
+
+# 免责声明
+本项目为 **非官方、第三方开源适配项目**，
+与 Telegram Messenger Inc.、华为鸿蒙官方无任何关联、授权与合作关系。
+Telegram 为 Telegram Messenger Inc. 注册商标，
+HarmonyOS 为华为技术有限公司注册商标。
+本项目仅用于个人技术学习与开源交流，不用于商业用途。
+
+
+
