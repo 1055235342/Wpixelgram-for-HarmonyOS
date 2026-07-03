@@ -1,0 +1,6 @@
+{
+  "name": "libtdlib_bridge.so",
+  "types": "./index.d.ts",
+  "main": "index.d.ts",
+  "version": "1.8.62"
+}

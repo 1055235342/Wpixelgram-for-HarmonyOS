@@ -51,6 +51,18 @@
           ]
         }
       ]
+    },
+    {
+      "name": "tgdempc",
+      "srcPath": "./products/pc",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
     }
   ]
 }

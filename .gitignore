@@ -15,3 +15,7 @@ appkey.json
 
 # Local API credentials. Keep real values out of git.
 entry/src/main/resources/rawfile/telegram_config.json
+products/pc/src/main/resources/rawfile/telegram_config.json
+
+# Generated module dependencies.
+**/oh_modules

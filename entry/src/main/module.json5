@@ -18,9 +18,9 @@
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
 //        "icon": "$media:layered_image",
-        "icon": "$media:startIcon",
+        "icon": "$media:startIcon2",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:startIcon1",
+        "startWindowIcon": "$media:startIcon2",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [
@@ -38,13 +38,15 @@
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET",
+        "reason": "$string:permission_internet_reason",
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "inuse"
         }
       },
       {
-        "name": "ohos.permission.VIBRATE"
+        "name": "ohos.permission.VIBRATE",
+        "reason": "$string:permission_vibrate_reason"
       }
     ],
     "extensionAbilities": [

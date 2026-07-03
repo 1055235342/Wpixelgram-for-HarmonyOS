@@ -10,7 +10,15 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "Wpixelgram"
+      "value": "卖报纸"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "允许使用Internet网络。"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "允许应用控制马达振动。"
     }
   ]
 }

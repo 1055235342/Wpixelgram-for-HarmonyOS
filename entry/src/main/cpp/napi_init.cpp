@@ -387,7 +387,10 @@ static void HandleVideoProxyClient(int client_fd) {
     SendPlaybackDownloadRequest(session, start, openEnded ? 0 : limit);
     int64_t initialRequiredEnd = std::min<int64_t>(endExclusive, start + kProxyInitialReadSize);
     if (!WaitUntilAvailable(session.file_id, start, initialRequiredEnd)) {
-        GetVideoProxySession(session.file_id, session);
+        if (!GetVideoProxySession(session.file_id, session)) {
+            close(client_fd);
+            return;
+        }
         int64_t available = GetReadableEndForOffset(session, start);
         if (available <= start) {
             if (!IsTailRangeRequest(session, start) && !seekRangeRequest) {
@@ -398,7 +401,10 @@ static void HandleVideoProxyClient(int client_fd) {
                 close(client_fd);
                 return;
             }
-            GetVideoProxySession(session.file_id, session);
+            if (!GetVideoProxySession(session.file_id, session)) {
+                close(client_fd);
+                return;
+            }
             available = GetReadableEndForOffset(session, start);
         }
         if (!openEnded) {
@@ -434,7 +440,11 @@ static void HandleVideoProxyClient(int client_fd) {
     int64_t remaining = contentLength;
     int64_t currentOffset = start;
     while (remaining > 0) {
-        GetVideoProxySession(session.file_id, session);
+        if (!GetVideoProxySession(session.file_id, session)) {
+            OH_LOG_ERROR(LOG_APP, "VideoProxy session stopped fileId=%{public}d offset=%{public}lld",
+                         file_id, static_cast<long long>(currentOffset));
+            break;
+        }
         int64_t available = GetReadableEndForOffset(session, currentOffset);
         if (available <= currentOffset) {
             SendPlaybackDownloadRequest(session, currentOffset, kProxyChunkSize * 2);
@@ -444,7 +454,11 @@ static void HandleVideoProxyClient(int client_fd) {
                              session.file_id, static_cast<long long>(currentOffset));
                 break;
             }
-            GetVideoProxySession(session.file_id, session);
+            if (!GetVideoProxySession(session.file_id, session)) {
+                OH_LOG_ERROR(LOG_APP, "VideoProxy session stopped after wait fileId=%{public}d offset=%{public}lld",
+                             file_id, static_cast<long long>(currentOffset));
+                break;
+            }
             available = GetReadableEndForOffset(session, currentOffset);
             clearerr(file);
         }
@@ -471,8 +485,7 @@ static void HandleVideoProxyClient(int client_fd) {
         currentOffset += static_cast<int64_t>(actual);
     }
     std::fclose(file);
-    if (seekRangeRequest) {
-        GetVideoProxySession(session.file_id, session);
+    if (seekRangeRequest && GetVideoProxySession(session.file_id, session)) {
         SendDownloadRequest(session, 0, 0);
     }
     close(client_fd);
@@ -669,11 +682,21 @@ static napi_value StopVideoProxy(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     int32_t file_id = 0;
     napi_get_value_int32(env, args[0], &file_id);
+    VideoProxySession session;
+    bool hadSession = false;
     {
         std::lock_guard<std::mutex> lock(g_proxy_mutex);
-        g_video_sessions.erase(file_id);
+        auto it = g_video_sessions.find(file_id);
+        if (it != g_video_sessions.end()) {
+            session = it->second;
+            hadSession = true;
+            g_video_sessions.erase(it);
+        }
     }
-    OH_LOG_ERROR(LOG_APP, "StopVideoProxy fileId=%{public}d", file_id);
+    if (hadSession) {
+        SendCancelDownloadRequest(session);
+    }
+    OH_LOG_ERROR(LOG_APP, "StopVideoProxy fileId=%{public}d hadSession=%{public}d", file_id, hadSession ? 1 : 0);
     napi_value js_null;
     napi_get_null(env, &js_null);
     return js_null;

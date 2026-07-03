@@ -1,0 +1,16 @@
+{
+  "src": [
+    "product/pages/LoginPage",
+    "product/pages/MainPage",
+    "features/chat/view/ChatListView",
+    "features/chat/view/ChatDetailView",
+    "features/chat/view/VideoPlayerView",
+    "features/chat/view/ContactsView",
+    "features/settings/view/ProfileView",
+    "features/chat/view/ChatProfileView",
+    "features/settings/view/DataStorageView",
+    "features/search/view/GlobalSearchView",
+    "features/settings/view/CacheManagementView",
+    "product/pages/Index"
+  ]
+}

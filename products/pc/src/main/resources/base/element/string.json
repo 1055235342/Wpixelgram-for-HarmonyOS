@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Telegram"
+    },
+    {
+      "name": "PcAbility_desc",
+      "value": "PC description"
+    },
+    {
+      "name": "PcAbility_label",
+      "value": "Telegram PC"
+    }
+  ]
+}

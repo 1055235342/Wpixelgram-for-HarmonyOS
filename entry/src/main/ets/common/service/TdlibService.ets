@@ -42,6 +42,16 @@ interface AuthenticationCodeRequest extends TdBaseRequest {
   code: string;
 }
 
+interface ResendAuthenticationCodeRequest extends TdBaseRequest {}
+
+interface AuthenticationPasswordRequest extends TdBaseRequest {
+  password: string;
+}
+
+interface QrCodeAuthenticationRequest extends TdBaseRequest {
+  other_user_ids: number[];
+}
+
 interface ChatListRequest extends TdBaseRequest {}
 
 interface GetChatsRequest extends TdBaseRequest {
@@ -58,6 +68,14 @@ interface GetChatRequest extends TdBaseRequest {
   chat_id: number;
 }
 
+interface GetSupergroupRequest extends TdBaseRequest {
+  supergroup_id: number;
+}
+
+interface JoinChatRequest extends TdBaseRequest {
+  chat_id: number;
+}
+
 interface GetChatHistoryRequest extends TdBaseRequest {
   chat_id: number;
   from_message_id: number;
@@ -68,6 +86,19 @@ interface GetChatHistoryRequest extends TdBaseRequest {
 interface GetMessageRequest extends TdBaseRequest {
   chat_id: number;
   message_id: number;
+}
+
+interface GetMessageThreadRequest extends TdBaseRequest {
+  chat_id: number;
+  message_id: number;
+}
+
+interface GetMessageThreadHistoryRequest extends TdBaseRequest {
+  chat_id: number;
+  message_id: number;
+  from_message_id: number;
+  offset: number;
+  limit: number;
 }
 
 interface GetChatPinnedMessageRequest extends TdBaseRequest {
@@ -142,6 +173,10 @@ interface DownloadFileRequest extends TdBaseRequest {
   synchronous: boolean;
 }
 
+interface GetFileRequest extends TdBaseRequest {
+  file_id: number;
+}
+
 interface CancelDownloadFileRequest extends TdBaseRequest {
   file_id: number;
   only_if_pending: boolean;
@@ -181,6 +216,10 @@ interface GetUserFullInfoRequest extends TdBaseRequest {
   user_id: number;
 }
 
+interface GetUserRequest extends TdBaseRequest {
+  user_id: number;
+}
+
 interface ChatNotificationSettingsRequest extends TdBaseRequest {
   use_default_mute_for: boolean;
   mute_for: number;
@@ -201,10 +240,11 @@ interface SetChatNotificationSettingsRequest extends TdBaseRequest {
 
 type TdRequest = TdBaseRequest | SetTdlibParametersRequest | PhoneNumberRequest |
   AuthenticationCodeRequest | GetChatsRequest | LoadChatsRequest | GetChatRequest | GetChatHistoryRequest |
-  GetMessageRequest | GetChatPinnedMessageRequest | SendMessageRequest | OptimizeStorageRequest | GetInstalledStickerSetsRequest |
-  SearchChatsOnServerRequest | SearchMessagesRequest | DownloadFileRequest | CancelDownloadFileRequest |
+  ResendAuthenticationCodeRequest | AuthenticationPasswordRequest | QrCodeAuthenticationRequest |
+  GetMessageRequest | GetMessageThreadRequest | GetMessageThreadHistoryRequest | GetChatPinnedMessageRequest | SendMessageRequest | OptimizeStorageRequest | GetInstalledStickerSetsRequest |
+  SearchChatsOnServerRequest | SearchMessagesRequest | DownloadFileRequest | GetFileRequest | CancelDownloadFileRequest |
   OpenMessageContentRequest | ViewMessagesRequest | GetMessageLinkInfoRequest | GetCallbackQueryAnswerRequest |
-  GetUserFullInfoRequest | SetChatNotificationSettingsRequest;
+  GetUserFullInfoRequest | GetUserRequest | SetChatNotificationSettingsRequest | GetSupergroupRequest | JoinChatRequest;
 
 export interface TdLocalFile {
   path: string;
@@ -332,13 +372,38 @@ export interface TdMessageReplyTo {
   quote?: TdTextQuote;
 }
 
+export interface TdMessageSender {
+  type: string;
+  user_id?: number;
+  chat_id?: number;
+}
+
+export interface TdMessageReplyInfo {
+  reply_count?: number;
+  recent_replier_ids?: TdMessageSender[];
+  last_read_inbox_message_id?: number;
+  last_read_outbox_message_id?: number;
+  last_message_id?: number;
+}
+
 export interface TdMessageInteractionInfo {
   view_count?: number;
+  forward_count?: number;
+  reply_info?: TdMessageReplyInfo;
+}
+
+export interface TdMessageThreadInfo {
+  chat_id?: number;
+  message_thread_id?: number;
+  reply_info?: TdMessageReplyInfo;
+  unread_message_count?: number;
+  messages?: TdMessage[];
 }
 
 export interface TdMessage {
   id: number;
   chat_id?: number;
+  sender_id?: TdMessageSender;
   is_outgoing: boolean;
   is_pinned?: boolean;
   media_album_id?: number;
@@ -352,7 +417,41 @@ export interface TdMessage {
 export interface TdChatType {
   type: string;
   user_id?: number;
+  supergroup_id?: number;
+  basic_group_id?: number;
   is_channel?: boolean;
+}
+
+export interface TdChatPermissions {
+  can_send_basic_messages?: boolean;
+  can_send_audios?: boolean;
+  can_send_documents?: boolean;
+  can_send_photos?: boolean;
+  can_send_videos?: boolean;
+  can_send_voice_notes?: boolean;
+  can_send_video_notes?: boolean;
+  can_send_polls?: boolean;
+  can_send_other_messages?: boolean;
+  can_add_link_previews?: boolean;
+}
+
+export interface TdChatAdministratorRights {
+  can_manage_chat?: boolean;
+  can_post_messages?: boolean;
+  can_edit_messages?: boolean;
+  can_delete_messages?: boolean;
+}
+
+export interface TdChatMemberStatus {
+  type: string;
+  is_member?: boolean;
+  rights?: TdChatAdministratorRights;
+}
+
+export interface TdSupergroup {
+  id: number;
+  is_channel?: boolean;
+  status?: TdChatMemberStatus;
 }
 
 export interface TdBotCommand {
@@ -402,6 +501,7 @@ export interface TdChat {
   positions?: TdChatPosition[];
   reply_markup_message_id?: number;
   notification_settings?: TdChatNotificationSettings;
+  permissions?: TdChatPermissions;
 }
 
 export interface TdUser {
@@ -429,12 +529,37 @@ export interface TdStorageStatisticsByChat {
   by_file_type?: TdStorageStatisticsByFileType[];
 }
 
+export interface TdAuthenticationCodeType {
+  type: string;
+  length?: number;
+  pattern?: string;
+}
+
+export interface TdAuthenticationCodeInfo {
+  phone_number?: string;
+  type?: TdAuthenticationCodeType;
+  next_type?: TdAuthenticationCodeType;
+  timeout?: number;
+}
+
 export interface TdAuthorizationState {
   type: string;
+  link?: string;
+  password_hint?: string;
+  has_recovery_email_address?: boolean;
+  recovery_email_address_pattern?: string;
+  code_info?: TdAuthenticationCodeInfo;
 }
 
 export interface TdUpdate {
   type: string;
+  code?: number;
+  error_message?: string;
+  link?: string;
+  password_hint?: string;
+  code_info?: TdAuthenticationCodeInfo;
+  has_recovery_email_address?: boolean;
+  recovery_email_address_pattern?: string;
   authorization_state?: TdAuthorizationState;
   total_count?: number;
   chat_ids?: number[];
@@ -448,10 +573,14 @@ export interface TdUpdate {
   position?: TdChatPosition;
   reply_markup_message_id?: number;
   notification_settings?: TdChatNotificationSettings;
+  permissions?: TdChatPermissions;
   chat_type?: TdChatType;
   photo?: TdChatPhotoInfo;
   title?: string;
   id?: number;
+  is_channel?: boolean;
+  status?: TdChatMemberStatus;
+  supergroup?: TdSupergroup;
   first_name?: string;
   last_name?: string;
   phone_number?: string;
@@ -460,6 +589,8 @@ export interface TdUpdate {
   user_ids?: number[];
   messages?: TdMessage[];
   message?: TdMessage;
+  message_thread_id?: number;
+  reply_info?: TdMessageReplyInfo;
   is_outgoing?: boolean;
   content?: TdMessageContent;
   reply_to?: TdMessageReplyTo;
@@ -468,9 +599,13 @@ export interface TdUpdate {
   message_id?: number;
   media_timestamp?: number;
   new_content?: TdMessageContent;
+  interaction_info?: TdMessageInteractionInfo;
   reply_markup?: TdReplyMarkup;
   reply_markup_message?: TdMessage;
   file?: TdFile;
+  local?: TdLocalFile;
+  remote?: TdRemoteFile;
+  expected_size?: number;
   url?: string;
   text?: string;
   show_alert?: boolean;
@@ -495,9 +630,10 @@ type UpdateListener = (update: TdUpdate) => void;
 
 export class TdlibService {
   private static instance: TdlibService;
-  private clientId: number;
+  private clientId: number = -1;
   private isPolling: boolean = false;
   private listeners: Map<string, UpdateListener[]> = new Map();
+  private currentAuthorizationState: string = '';
 
   public static getInstance(): TdlibService {
     if (!TdlibService.instance) {
@@ -507,8 +643,13 @@ export class TdlibService {
   }
 
   private constructor() {
+    this.recreateClient();
+  }
+
+  public recreateClient(): void {
     console.info('[TdlibService] create native client');
     this.clientId = createNativeClient();
+    this.currentAuthorizationState = '';
     console.info(`[TdlibService] native client id=${this.clientId}`);
     if (this.clientId < 0) {
       console.error('TdlibService: 创建客户端失败');
@@ -540,15 +681,45 @@ export class TdlibService {
         console.info(`[TdlibService] response raw=${resp}`);
         try {
           const update = JSON.parse(this.normalizeResponse(resp)) as TdUpdate;
-          this.dispatchUpdate(update.type, update);
-          if (update.type === 'updateAuthorizationState' && update.authorization_state) {
-            this.dispatchUpdate(update.authorization_state.type, update);
-          }
+          this.dispatchNormalizedUpdate(update);
         } catch (e) {
           console.error(`[TdlibService] parse response failed=${JSON.stringify(e)}`);
         }
       }
     }, interval * 1000);
+  }
+
+  private dispatchNormalizedUpdate(update: TdUpdate): void {
+    if (update.type === 'updateAuthorizationState' && update.authorization_state) {
+      this.currentAuthorizationState = update.authorization_state.type;
+      console.info(`[TdlibService] authorization state=${this.currentAuthorizationState}`);
+      this.dispatchUpdate(update.type, update);
+      this.dispatchUpdate(update.authorization_state.type, update);
+      return;
+    }
+    if (this.isAuthorizationStateType(update.type)) {
+      const authUpdate: TdUpdate = {
+        type: 'updateAuthorizationState',
+        authorization_state: {
+          type: update.type,
+          link: update.link,
+          password_hint: update.password_hint,
+          code_info: update.code_info,
+          has_recovery_email_address: update.has_recovery_email_address,
+          recovery_email_address_pattern: update.recovery_email_address_pattern
+        }
+      };
+      this.currentAuthorizationState = update.type;
+      console.info(`[TdlibService] authorization state=${this.currentAuthorizationState}`);
+      this.dispatchUpdate('updateAuthorizationState', authUpdate);
+      this.dispatchUpdate(update.type, authUpdate);
+      return;
+    }
+    this.dispatchUpdate(update.type, update);
+  }
+
+  private isAuthorizationStateType(type: string): boolean {
+    return type.indexOf('authorizationState') === 0;
   }
 
   private normalizeResponse(resp: string): string {
@@ -558,7 +729,11 @@ export class TdlibService {
         .replace(',"type":{', ',"chat_type":{')
         .replace(/"@type"/g, '"type"');
     }
-    return resp.replace(/"@type"/g, '"type"');
+    const normalized = resp.replace(/"@type"/g, '"type"');
+    if (normalized.startsWith('{"type":"error"')) {
+      return normalized.replace('"message":', '"error_message":');
+    }
+    return normalized;
   }
 
   private dispatchUpdate(type: string, update: TdUpdate): void {
@@ -591,6 +766,10 @@ export class TdlibService {
     }
   }
 
+  public getCurrentAuthorizationState(): string {
+    return this.currentAuthorizationState;
+  }
+
   // ============ 常用 API 封装 ============
   public setTdlibParameters(params: TdlibParameters): void {
     const request: SetTdlibParametersRequest = {
@@ -618,6 +797,18 @@ export class TdlibService {
   public checkAuthenticationCode(code: string): void {
     this.sendRequest({ '@type': 'checkAuthenticationCode', code: code });
   }
+  public resendAuthenticationCode(): void {
+    this.sendRequest({ '@type': 'resendAuthenticationCode' });
+  }
+  public checkAuthenticationPassword(password: string): void {
+    this.sendRequest({ '@type': 'checkAuthenticationPassword', password: password });
+  }
+  public requestQrCodeAuthentication(): void {
+    this.sendRequest({ '@type': 'requestQrCodeAuthentication', other_user_ids: [] });
+  }
+  public close(): void {
+    this.sendRequest({ '@type': 'close' });
+  }
   public getAuthorizationState(): void {
     this.sendRequest({ '@type': 'getAuthorizationState' });
   }
@@ -629,6 +820,12 @@ export class TdlibService {
   }
   public getChat(chatId: number): void {
     this.sendRequest({ '@type': 'getChat', chat_id: chatId });
+  }
+  public getSupergroup(supergroupId: number): void {
+    this.sendRequest({ '@type': 'getSupergroup', supergroup_id: supergroupId });
+  }
+  public joinChat(chatId: number): void {
+    this.sendRequest({ '@type': 'joinChat', chat_id: chatId });
   }
   public setChatNotificationMute(chatId: number, muteFor: number): void {
     this.sendRequest({
@@ -667,6 +864,26 @@ export class TdlibService {
   public getMessage(chatId: number, messageId: number): void {
     this.sendRequest({ '@type': 'getMessage', chat_id: chatId, message_id: messageId });
   }
+  public getMessageThread(chatId: number, messageId: number): void {
+    const request: GetMessageThreadRequest = {
+      '@type': 'getMessageThread',
+      chat_id: chatId,
+      message_id: messageId
+    };
+    this.sendRequest(request);
+  }
+  public getMessageThreadHistory(chatId: number, messageId: number, fromMessageId: number = 0, offset: number = 0,
+    limit: number = 30): void {
+    const request: GetMessageThreadHistoryRequest = {
+      '@type': 'getMessageThreadHistory',
+      chat_id: chatId,
+      message_id: messageId,
+      from_message_id: fromMessageId,
+      offset: offset,
+      limit: limit
+    };
+    this.sendRequest(request);
+  }
   public getChatPinnedMessage(chatId: number): void {
     this.sendRequest({ '@type': 'getChatPinnedMessage', chat_id: chatId });
   }
@@ -688,6 +905,9 @@ export class TdlibService {
   }
   public getUserFullInfo(userId: number): void {
     this.sendRequest({ '@type': 'getUserFullInfo', user_id: userId });
+  }
+  public getUser(userId: number): void {
+    this.sendRequest({ '@type': 'getUser', user_id: userId });
   }
   public optimizeStorage(fileTypes: string[], size: number = 0, ttl: number = 30*24*3600): void {
     const types: FileType[] = fileTypes.map((t: string): FileType => {
@@ -754,6 +974,9 @@ export class TdlibService {
       limit: limit,
       synchronous: false
     });
+  }
+  public getFile(fileId: number): void {
+    this.sendRequest({ '@type': 'getFile', file_id: fileId });
   }
   /**
    * 暂停/取消正在下载的文件（退出视频时调用）
